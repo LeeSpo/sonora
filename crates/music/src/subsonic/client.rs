@@ -938,6 +938,28 @@ impl SubsonicClient {
             .unwrap_or_default()
     }
 
+    /// Structured lyrics Navidrome (and other OpenSubsonic servers) keep for a song: embedded
+    /// tags, sidecar `.lrc` files the server scanned, and anything else `getLyricsBySongId`
+    /// returns. `enhanced` asks for word-level cues when the server supports songLyrics v2.
+    pub async fn lyrics(
+        &self,
+        track_id: &str,
+        enhanced: bool,
+    ) -> Result<opensubsonic::data::LyricsList> {
+        self.client
+            .get_lyrics_by_song_id(track_id, Some(enhanced).filter(|value| *value))
+            .await
+            .with_context(|| format!("cannot load lyrics for {track_id}"))
+    }
+
+    /// Downloads the original audio file for offline storage.
+    pub async fn download_track(&self, track_id: &str) -> Result<bytes::Bytes> {
+        self.client
+            .download(track_id)
+            .await
+            .with_context(|| format!("cannot download {track_id}"))
+    }
+
     /// Opens the audio of a track and answers once the response headers are in; the body is
     /// still on its way.
     pub async fn open_stream(&self, track_id: &str) -> Result<reqwest::Response> {

@@ -2,16 +2,19 @@
 //!
 //! Almost nothing, as it turns out. The server hands over an ordinary audio file, so the stream
 //! takes the bytes as they come and rodio decodes them. The threads, the queue, the preload and
-//! the gapless join are the engine's.
+//! the gapless join are the engine's. When the listener has saved a track offline, the bytes
+//! come from disk instead of the network.
 
 use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
 
 use crate::engine::{self, Fetch, Loudness};
-use crate::stream::{Plain, Reader, Stream};
+use crate::stream::{Plain, Reader, Source, Stream};
 use crate::subsonic::client::{Details, SubsonicClient};
+use crate::subsonic::offline;
 use crate::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
 
 /// A track downloading, and what the server says about its length and loudness.
@@ -46,6 +49,15 @@ struct Subsonic {
     client: SubsonicClient,
 }
 
+/// One complete body already on disk, served as a single chunk.
+struct CachedBytes(Option<Bytes>);
+
+impl Source for CachedBytes {
+    async fn chunk(&mut self) -> Result<Option<Bytes>> {
+        Ok(self.0.take())
+    }
+}
+
 #[async_trait]
 impl Fetch for Subsonic {
     type Loaded = Loaded;
@@ -56,8 +68,22 @@ impl Fetch for Subsonic {
     }
 
     /// Opens the stream and asks for the length and loudness at the same time, so neither round
-    /// trip waits on the other. The preroll usually covers the lookup entirely.
+    /// trip waits on the other. The preroll usually covers the lookup entirely. A saved offline
+    /// copy skips the network entirely.
     async fn load(&self, id: &str) -> Result<Loaded> {
+        if let Some((_path, bytes)) = offline::read_cached(id) {
+            let total = bytes.len() as u64;
+            let stream = Stream::pulling(CachedBytes(Some(Bytes::from(bytes))), Some(total), Plain)
+                .primed()
+                .await?;
+            // Stay off the network entirely: length comes from what we stored at save time.
+            let details = Details {
+                duration: offline::cached_duration(id),
+                loudness: None,
+            };
+            return Ok(Loaded { stream, details });
+        }
+
         let (stream, details) = tokio::join!(
             async { Stream::open(self.client.open_stream(id).await?, Plain).await },
             self.client.details(id),

@@ -3,7 +3,7 @@ use gpui::{App, ClickEvent, ClipboardItem, Context, Entity, SharedString, Window
 use i18n::t;
 use music::{Album, GenreItem, MediaKind, Playlist, SavedArtist, Track};
 use router::{Destination, navigate};
-use state::{Addition, Detail, History, Library, Origin, Playback, Shelf, Sonora};
+use state::{Addition, Detail, History, Library, Offline, Origin, Playback, Shelf, Sonora};
 use ui::{Menu, MenuItem, MenuSearch, Pin, PinKind, Scrollbar, SubmenuState};
 
 use crate::shared::confirm::Confirm;
@@ -472,6 +472,51 @@ impl ItemMenu {
                 .on_click(move |_, window, cx| TagEditor::open(track.clone(), window, cx))
         });
 
+        let streaming = !imported && !barren;
+        let offline_item = streaming.then(|| {
+            let offline = Sonora::global(cx).offline.clone();
+            let all_saved = ids.iter().all(|id| offline.read(cx).is_saved(id));
+            let any_saving = ids.iter().any(|id| offline.read(cx).is_saving(id));
+            if all_saved {
+                let held = ids.clone();
+                MenuItem::new(
+                    "remove-offline",
+                    counted("menu-remove-offline", "menu-remove-tracks-offline", count),
+                )
+                .icon("icons/trash-2.svg")
+                .on_click(move |_, _, cx| {
+                    Offline::global(cx).update(cx, |offline, cx| {
+                        offline.remove_tracks(held.clone(), cx);
+                    });
+                })
+            } else {
+                let held = tracks
+                    .iter()
+                    .filter(|track| {
+                        track
+                            .id
+                            .as_deref()
+                            .is_some_and(|id| !music::is_local_id(id))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let item = MenuItem::new(
+                    "save-offline",
+                    counted("menu-save-offline", "menu-save-tracks-offline", count),
+                )
+                .icon("icons/download.svg");
+                if any_saving || held.is_empty() {
+                    item.disabled()
+                } else {
+                    item.on_click(move |_, _, cx| {
+                        Offline::global(cx).update(cx, |offline, cx| {
+                            offline.save_tracks(held.clone(), cx);
+                        });
+                    })
+                }
+            }
+        });
+
         let delete_files = imported.then(|| {
             let ids = ids.clone();
             MenuItem::new(
@@ -509,6 +554,7 @@ impl ItemMenu {
                 details
                     .into_iter()
                     .chain(edit)
+                    .chain(offline_item)
                     .chain(copy)
                     .chain(delete_files)
                     .collect(),

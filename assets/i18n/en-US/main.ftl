@@ -126,6 +126,16 @@ menu-remove-tracks-from-history = { $count ->
     [one] Remove { $count } track from history
    *[other] Remove { $count } tracks from history
 }
+menu-save-offline = Save offline
+menu-save-tracks-offline = { $count ->
+    [one] Save { $count } track offline
+   *[other] Save { $count } tracks offline
+}
+menu-remove-offline = Remove offline copy
+menu-remove-tracks-offline = { $count ->
+    [one] Remove { $count } offline copy
+   *[other] Remove { $count } offline copies
+}
 menu-delete-track-file = Delete track file
 menu-delete-track-files = Delete { $count } track files
 menu-play-next = Play next
@@ -671,6 +681,7 @@ settings-lyrics-providers-selected = { $count ->
    *[other] { $count } selected
     }
 settings-lyrics-provider-local = Local files
+settings-lyrics-provider-subsonic = Subsonic / Navidrome
 settings-lyrics-provider-spotify = Spotify
 settings-lyrics-provider-youtube = YouTube Music
 settings-lyrics-provider-apple-music = Apple Music
@@ -790,6 +801,10 @@ toast-playlist-created = Playlist created
 toast-playlist-renamed = Playlist renamed
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
+toast-offline-saved = Saved for offline playback
+toast-offline-failed = Could not save the track offline
+toast-offline-removed = Offline copy removed
+toast-offline-remove-failed = Could not remove the offline copy
 toast-playlist-added = Playlist added to your library
 toast-playlist-removed = Playlist removed from your library
 toast-playlist-visibility = Playlist visibility changed

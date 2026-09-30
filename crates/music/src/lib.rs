@@ -17,6 +17,7 @@ pub mod lyrics;
 mod models;
 pub mod musixmatch;
 pub mod netease;
+pub mod offline;
 pub mod potoken;
 pub mod progress;
 pub mod scrobble;

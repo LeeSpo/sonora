@@ -438,6 +438,7 @@ impl Default for Values {
             local_lyrics_offered: false,
             lyrics_providers: [
                 LOCAL,
+                "Subsonic",
                 "Spotify",
                 "YouTube Music",
                 "Apple Music",

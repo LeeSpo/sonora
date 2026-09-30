@@ -12,6 +12,7 @@ mod logging;
 mod lyrics;
 mod mosaic;
 mod network;
+mod offline;
 mod pins;
 mod playback;
 mod potoken;
@@ -46,6 +47,7 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
+pub use offline::{Offline, OfflineEntry, OfflineStatus};
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;
@@ -164,6 +166,7 @@ pub struct Sonora {
     pub history: Entity<History>,
     pub lyrics: Entity<Lyrics>,
     pub network: Entity<Network>,
+    pub offline: Entity<Offline>,
     pub pins: Entity<Pins>,
     pub playback: Entity<Playback>,
     /// The window that mints YouTube's proof-of-origin token. Nothing reads it; it is held so
@@ -235,6 +238,7 @@ pub fn init(
             cx,
         )
     });
+    let offline = cx.new(|_| Offline::new(io.clone()));
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),
@@ -270,6 +274,7 @@ pub fn init(
         history,
         lyrics,
         network,
+        offline,
         pins,
         playback,
         potoken,

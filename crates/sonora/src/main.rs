@@ -102,6 +102,7 @@ fn main() {
             ));
         let lyrics: Vec<Arc<dyn LyricsProvider>> = vec![
             Arc::new(music::local::LocalLyrics),
+            Arc::new(music::subsonic::SubsonicLyrics::new()),
             Arc::new(music::spotify::SpotifyLyrics::from_env()),
             Arc::new(music::youtube::YouTubeLyrics::new()),
             Arc::new(music::binimum::Binimum::new()),
@@ -291,6 +292,7 @@ fn open_window(cx: &mut App) {
         history: _,
         lyrics: _,
         network: _,
+        offline: _,
         pins: _,
         playback,
         potoken: _,
