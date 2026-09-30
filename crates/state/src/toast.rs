@@ -25,6 +25,7 @@ pub struct Toast {
     pub key: SharedString,
     pub name: Option<SharedString>,
     pub target: Option<Target>,
+    pub counts: Option<(usize, usize)>,
     held: bool,
     rest: Instant,
 }
@@ -53,7 +54,27 @@ impl Toasts {
     pub fn show(outcome: Outcome, key: impl Into<SharedString>, cx: &mut App) {
         let toasts = Self::entity(cx);
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), None, None, cx)
+            this.push(outcome, key.into(), None, None, None, cx)
+        });
+    }
+
+    pub fn show_counts(
+        outcome: Outcome,
+        key: impl Into<SharedString>,
+        succeeded: usize,
+        failed: usize,
+        cx: &mut App,
+    ) {
+        let toasts = Self::entity(cx);
+        toasts.update(cx, |this, cx| {
+            this.push(
+                outcome,
+                key.into(),
+                None,
+                None,
+                Some((succeeded, failed)),
+                cx,
+            )
         });
     }
 
@@ -66,7 +87,7 @@ impl Toasts {
         let toasts = Self::entity(cx);
         let name = Some(name.into());
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), name, None, cx)
+            this.push(outcome, key.into(), name, None, None, cx)
         });
     }
 
@@ -80,7 +101,7 @@ impl Toasts {
         let toasts = Self::entity(cx);
         let name = Some(name.into());
         toasts.update(cx, |this, cx| {
-            this.push(outcome, key.into(), name, target, cx)
+            this.push(outcome, key.into(), name, target, None, cx)
         });
     }
 
@@ -113,12 +134,15 @@ impl Toasts {
         key: SharedString,
         name: Option<SharedString>,
         target: Option<Target>,
+        counts: Option<(usize, usize)>,
         cx: &mut Context<Self>,
     ) {
-        let showing = self
-            .shown
-            .iter()
-            .any(|toast| toast.outcome == outcome && toast.key == key && toast.name == name);
+        let showing = self.shown.iter().any(|toast| {
+            toast.outcome == outcome
+                && toast.key == key
+                && toast.name == name
+                && toast.counts == counts
+        });
         if showing {
             return;
         }
@@ -131,6 +155,7 @@ impl Toasts {
             key,
             name,
             target,
+            counts,
             held: false,
             rest: Instant::now(),
         });

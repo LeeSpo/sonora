@@ -210,10 +210,19 @@ impl Offline {
                     if remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
                         let fails = failed.load(Ordering::SeqCst);
                         let oks = succeeded.load(Ordering::SeqCst);
-                        if fails > 0 {
-                            Toasts::show(Outcome::Failed, "toast-offline-failed", cx);
-                        } else if oks > 0 {
-                            Toasts::show(Outcome::Done, "toast-offline-saved", cx);
+                        if oks > 0 || fails > 0 {
+                            let outcome = if fails > 0 {
+                                Outcome::Failed
+                            } else {
+                                Outcome::Done
+                            };
+                            Toasts::show_counts(
+                                outcome,
+                                "toast-offline-save-summary",
+                                oks,
+                                fails,
+                                cx,
+                            );
                         }
                     }
                     cx.notify();
@@ -247,10 +256,19 @@ impl Offline {
                 }
             }
         }
-        if failed > 0 {
-            Toasts::show(Outcome::Failed, "toast-offline-remove-failed", cx);
-        } else if succeeded > 0 {
-            Toasts::show(Outcome::Done, "toast-offline-removed", cx);
+        if succeeded > 0 || failed > 0 {
+            let outcome = if failed > 0 {
+                Outcome::Failed
+            } else {
+                Outcome::Done
+            };
+            Toasts::show_counts(
+                outcome,
+                "toast-offline-remove-summary",
+                succeeded,
+                failed,
+                cx,
+            );
         }
         cx.notify();
     }

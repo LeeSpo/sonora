@@ -39,13 +39,20 @@ impl Render for ToastStack {
                 let toasts = self.toasts.clone();
                 let held = self.toasts.clone();
 
-                let message = match &toast.name {
-                    None => i18n::lookup(&toast.key, None),
-                    Some(name) => {
+                let message = match (&toast.name, toast.counts) {
+                    (None, None) => i18n::lookup(&toast.key, None),
+                    (Some(name), None) => {
                         let mut args = i18n::FluentArgs::new();
                         args.set("name", i18n::Value::value(name.as_ref()));
                         i18n::lookup(&toast.key, Some(&args))
                     }
+                    (None, Some((succeeded, failed))) => {
+                        let mut args = i18n::FluentArgs::new();
+                        args.set("succeeded", i18n::Value::value(succeeded));
+                        args.set("failed", i18n::Value::value(failed));
+                        i18n::lookup(&toast.key, Some(&args))
+                    }
+                    (Some(_), Some(_)) => i18n::lookup(&toast.key, None),
                 };
 
                 Toast::new(("toast", id), message)
