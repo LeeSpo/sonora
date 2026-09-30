@@ -167,14 +167,75 @@ pub fn cancel(track_id: &str) {
 
 fn load_manifest_for(account_key: &str) -> Manifest {
     let path = manifest_path_for(account_key);
-    match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+    let mut manifest = match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|_| Manifest {
+            version: 1,
+            server: account_key.to_owned(),
+            ..Manifest::default()
+        }),
         Err(_) => Manifest {
             version: 1,
             server: account_key.to_owned(),
             ..Manifest::default()
         },
+    };
+    if manifest.server.is_empty() {
+        manifest.server = account_key.to_owned();
     }
+    if validate(account_key, &mut manifest) {
+        if let Err(error) = persist(account_key, &manifest) {
+            log::warn!("offline: cannot rewrite the validated index: {error:#}");
+        }
+    }
+    manifest
+}
+
+/// Drop manifest rows whose files are gone, and delete orphan `.audio` / `.part` files that
+/// are not indexed. Returns whether the manifest changed.
+fn validate(account_key: &str, manifest: &mut Manifest) -> bool {
+    let dir = root_for(account_key);
+    let mut dirty = false;
+    let before = manifest.tracks.len();
+    manifest.tracks.retain(|_id, entry| {
+        let path = dir.join(&entry.file);
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() && meta.len() > 0 => true,
+            _ => {
+                dirty = true;
+                false
+            }
+        }
+    });
+    if manifest.tracks.len() != before {
+        dirty = true;
+    }
+
+    let known: HashSet<String> = manifest
+        .tracks
+        .values()
+        .map(|entry| entry.file.clone())
+        .collect();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name == MANIFEST || name.ends_with(".json.tmp") {
+                continue;
+            }
+            let path = entry.path();
+            if name.ends_with(".part") {
+                let _ = fs::remove_file(&path);
+                continue;
+            }
+            if name.ends_with(&format!(".{AUDIO_EXT}")) && !known.contains(name) {
+                log::info!("offline: removing orphan cache file {name}");
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    dirty
 }
 
 fn persist(account_key: &str, manifest: &Manifest) -> Result<()> {
@@ -322,42 +383,69 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
         guard.manifest = load_manifest_for(&server);
         guard.key = server.clone();
     }
+    let previous = guard.manifest.tracks.insert(id.to_owned(), entry.clone());
     guard.manifest.version = 1;
     guard.manifest.server = server.clone();
-    guard.manifest.tracks.insert(id.to_owned(), entry.clone());
-    persist(&server, &guard.manifest)?;
+    if let Err(error) = persist(&server, &guard.manifest) {
+        // Roll back the index and the new file so a failed save leaves nothing half-written.
+        match previous {
+            Some(previous) => {
+                guard.manifest.tracks.insert(id.to_owned(), previous);
+            }
+            None => {
+                guard.manifest.tracks.remove(id);
+            }
+        }
+        let _ = fs::remove_file(&dest);
+        return Err(error).context("cannot update the offline index");
+    }
     Ok(entry)
 }
 
 pub fn remove(track_id: &str) -> Result<()> {
     cancel(track_id);
-    remove_file_only(track_id)?;
     let mut guard = held().lock().expect("offline cache lock");
     let Some(key) = ensure(&mut guard) else {
+        // Nothing signed in: still try to drop a leftover file for this id.
+        drop(guard);
+        remove_files_for(track_id, None);
         return Ok(());
     };
-    guard.manifest.tracks.remove(track_id);
-    persist(&key, &guard.manifest)?;
+    let Some(entry) = guard.manifest.tracks.remove(track_id) else {
+        // Not indexed: clear any stray file named for this id.
+        drop(guard);
+        remove_files_for(track_id, Some(&key));
+        return Ok(());
+    };
+    if let Err(error) = persist(&key, &guard.manifest) {
+        // Roll the row back so the index still matches the file on disk.
+        guard.manifest.tracks.insert(track_id.to_owned(), entry);
+        return Err(error).context("cannot update the offline index");
+    }
+    let named = root_for(&key).join(&entry.file);
+    drop(guard);
+    // Index already committed: a file delete failure leaves an orphan that validate sweeps.
+    if named.exists()
+        && let Err(error) = fs::remove_file(&named)
+    {
+        log::warn!("offline: cannot delete {}: {error}", named.display());
+    }
+    remove_files_for(track_id, Some(&key));
     Ok(())
 }
 
-fn remove_file_only(track_id: &str) -> Result<()> {
-    let Some(path) = file_for(track_id) else {
-        return Ok(());
-    };
-    if path.exists() {
-        fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))?;
-    }
-    if let Ok(mut guard) = held().lock()
-        && let Some(key) = ensure(&mut guard)
-        && let Some(entry) = guard.manifest.tracks.get(track_id)
+fn remove_files_for(track_id: &str, account_key: Option<&str>) {
+    if let Some(path) = file_for(track_id)
+        && path.exists()
     {
-        let named = root_for(&key).join(&entry.file);
-        if named.exists() && named != path {
-            let _ = fs::remove_file(named);
+        let _ = fs::remove_file(&path);
+    }
+    if let Some(key) = account_key {
+        let dest = file_for_in(&root_for(key), track_id);
+        if dest.exists() {
+            let _ = fs::remove_file(dest);
         }
     }
-    Ok(())
 }
 
 fn now() -> i64 {
