@@ -238,7 +238,7 @@ pub fn init(
             cx,
         )
     });
-    let offline = cx.new(|_| Offline::new(io.clone()));
+    let offline = cx.new(|cx| Offline::new(session.clone(), io.clone(), cx));
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),

@@ -37,12 +37,12 @@ pub struct CachedTrack {
 #[derive(Default, Serialize, Deserialize)]
 struct Manifest {
     version: u32,
-    /// Server the cache belongs to. A different server clears the index on next save.
+    /// Account key (`Credentials::account_key`) this directory belongs to.
     server: String,
     tracks: HashMap<String, CachedTrack>,
 }
 
-fn root() -> PathBuf {
+fn base() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("sonora")
@@ -50,11 +50,25 @@ fn root() -> PathBuf {
         .join("subsonic")
 }
 
-fn manifest_path() -> PathBuf {
-    root().join(MANIFEST)
+/// Stable directory name for an account: hash of [`Credentials::account_key`], so multi-URL
+/// picks for the same account share one cache and a different account never overwrites it.
+fn dir_name(account_key: &str) -> String {
+    format!("{:x}", Sha256::digest(account_key.as_bytes()))
 }
 
-fn file_for(id: &str) -> PathBuf {
+fn root_for(account_key: &str) -> PathBuf {
+    base().join(dir_name(account_key))
+}
+
+fn root() -> Option<PathBuf> {
+    Some(root_for(&server_key()?))
+}
+
+fn manifest_path_for(account_key: &str) -> PathBuf {
+    root_for(account_key).join(MANIFEST)
+}
+
+fn file_for_in(dir: &Path, id: &str) -> PathBuf {
     // Hash ids that contain path separators so a server id cannot escape the cache dir.
     let safe = match id
         .chars()
@@ -63,12 +77,59 @@ fn file_for(id: &str) -> PathBuf {
         true => id.to_owned(),
         false => format!("{:x}", Sha256::digest(id.as_bytes())),
     };
-    root().join(format!("{safe}.{AUDIO_EXT}"))
+    dir.join(format!("{safe}.{AUDIO_EXT}"))
 }
 
-fn held() -> &'static Mutex<Manifest> {
-    static HELD: OnceLock<Mutex<Manifest>> = OnceLock::new();
-    HELD.get_or_init(|| Mutex::new(load_manifest()))
+fn file_for(id: &str) -> Option<PathBuf> {
+    Some(file_for_in(&root()?, id))
+}
+
+struct Held {
+    /// `account_key` the in-memory manifest belongs to. Empty when nothing is loaded.
+    key: String,
+    manifest: Manifest,
+}
+
+fn held() -> &'static Mutex<Held> {
+    static HELD: OnceLock<Mutex<Held>> = OnceLock::new();
+    HELD.get_or_init(|| {
+        Mutex::new(Held {
+            key: String::new(),
+            manifest: Manifest {
+                version: 1,
+                ..Manifest::default()
+            },
+        })
+    })
+}
+
+/// Reload the in-memory index for the signed-in account (or clear it after logout).
+pub fn reload() {
+    let Ok(mut guard) = held().lock() else {
+        return;
+    };
+    match server_key() {
+        Some(key) => {
+            guard.manifest = load_manifest_for(&key);
+            guard.key = key;
+        }
+        None => {
+            guard.key.clear();
+            guard.manifest = Manifest {
+                version: 1,
+                ..Manifest::default()
+            };
+        }
+    }
+}
+
+fn ensure(guard: &mut Held) -> Option<String> {
+    let key = server_key()?;
+    if guard.key != key {
+        guard.manifest = load_manifest_for(&key);
+        guard.key = key.clone();
+    }
+    Some(key)
 }
 
 fn cancelled() -> &'static Mutex<HashSet<String>> {
@@ -96,27 +157,30 @@ pub fn cancel(track_id: &str) {
     if let Ok(mut set) = cancelled().lock() {
         set.insert(track_id.to_owned());
     }
-    let part = file_for(track_id).with_extension("part");
-    if part.exists() {
-        let _ = fs::remove_file(&part);
+    if let Some(dest) = file_for(track_id) {
+        let part = dest.with_extension("part");
+        if part.exists() {
+            let _ = fs::remove_file(&part);
+        }
     }
 }
 
-fn load_manifest() -> Manifest {
-    let path = manifest_path();
+fn load_manifest_for(account_key: &str) -> Manifest {
+    let path = manifest_path_for(account_key);
     match fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => Manifest {
             version: 1,
+            server: account_key.to_owned(),
             ..Manifest::default()
         },
     }
 }
 
-fn persist(manifest: &Manifest) -> Result<()> {
-    let dir = root();
+fn persist(account_key: &str, manifest: &Manifest) -> Result<()> {
+    let dir = root_for(account_key);
     fs::create_dir_all(&dir).context("cannot create the offline cache folder")?;
-    let path = manifest_path();
+    let path = manifest_path_for(account_key);
     let tmp = path.with_extension("json.tmp");
     let bytes =
         serde_json::to_vec_pretty(manifest).context("cannot serialize the offline index")?;
@@ -161,30 +225,23 @@ pub fn is_cached(track_id: &str) -> bool {
 
 /// Absolute path of a ready offline file, if it exists and still matches the index.
 pub fn path(track_id: &str) -> Option<PathBuf> {
-    let server = server_key()?;
-    let Ok(guard) = held().lock() else {
+    let Ok(mut guard) = held().lock() else {
         return None;
     };
-    if guard.server != server {
-        return None;
-    }
-    let entry = guard.tracks.get(track_id)?;
-    let path = root().join(&entry.file);
+    let key = ensure(&mut guard)?;
+    let entry = guard.manifest.tracks.get(track_id)?;
+    let path = root_for(&key).join(&entry.file);
     path.is_file().then_some(path)
 }
 
 pub fn list() -> Vec<CachedTrack> {
-    let server = match server_key() {
-        Some(server) => server,
-        None => return Vec::new(),
-    };
-    let Ok(guard) = held().lock() else {
+    let Ok(mut guard) = held().lock() else {
         return Vec::new();
     };
-    if guard.server != server {
+    if ensure(&mut guard).is_none() {
         return Vec::new();
     }
-    let mut tracks: Vec<_> = guard.tracks.values().cloned().collect();
+    let mut tracks: Vec<_> = guard.manifest.tracks.values().cloned().collect();
     tracks.sort_by_key(|b| std::cmp::Reverse(b.saved_at));
     tracks
 }
@@ -206,9 +263,9 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
         bail!("the server returned an empty file for {id}");
     }
 
-    let dir = root();
+    let dir = root_for(&server);
     fs::create_dir_all(&dir).context("cannot create the offline cache folder")?;
-    let dest = file_for(id);
+    let dest = file_for_in(&dir, id);
     let tmp = dest.with_extension("part");
     if is_cancelled(id) {
         bail!("download cancelled");
@@ -245,27 +302,15 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
             .to_owned(),
     };
 
-    // Switch libraries: drop every old file before rewriting the index.
-    let stale = {
-        let guard = held().lock().expect("offline cache lock");
-        if guard.server != server {
-            guard.tracks.keys().cloned().collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        }
-    };
-    for old in &stale {
-        let _ = remove_file_only(old);
-    }
-
     let mut guard = held().lock().expect("offline cache lock");
-    if !stale.is_empty() {
-        guard.tracks.clear();
+    if guard.key != server {
+        guard.manifest = load_manifest_for(&server);
+        guard.key = server.clone();
     }
-    guard.version = 1;
-    guard.server = server;
-    guard.tracks.insert(id.to_owned(), entry.clone());
-    persist(&guard)?;
+    guard.manifest.version = 1;
+    guard.manifest.server = server.clone();
+    guard.manifest.tracks.insert(id.to_owned(), entry.clone());
+    persist(&server, &guard.manifest)?;
     Ok(entry)
 }
 
@@ -273,20 +318,26 @@ pub fn remove(track_id: &str) -> Result<()> {
     cancel(track_id);
     remove_file_only(track_id)?;
     let mut guard = held().lock().expect("offline cache lock");
-    guard.tracks.remove(track_id);
-    persist(&guard)?;
+    let Some(key) = ensure(&mut guard) else {
+        return Ok(());
+    };
+    guard.manifest.tracks.remove(track_id);
+    persist(&key, &guard.manifest)?;
     Ok(())
 }
 
 fn remove_file_only(track_id: &str) -> Result<()> {
-    let path = file_for(track_id);
+    let Some(path) = file_for(track_id) else {
+        return Ok(());
+    };
     if path.exists() {
         fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))?;
     }
-    if let Ok(guard) = held().lock()
-        && let Some(entry) = guard.tracks.get(track_id)
+    if let Ok(mut guard) = held().lock()
+        && let Some(key) = ensure(&mut guard)
+        && let Some(entry) = guard.manifest.tracks.get(track_id)
     {
-        let named = root().join(&entry.file);
+        let named = root_for(&key).join(&entry.file);
         if named.exists() && named != path {
             let _ = fs::remove_file(named);
         }
@@ -310,20 +361,18 @@ pub fn read_cached(track_id: &str) -> Option<(PathBuf, Vec<u8>)> {
 
 /// Length recorded when the track was saved, so playback does not need the network.
 pub fn cached_duration(track_id: &str) -> Option<Duration> {
-    let server = server_key()?;
-    let Ok(guard) = held().lock() else {
+    let Ok(mut guard) = held().lock() else {
         return None;
     };
-    if guard.server != server {
-        return None;
-    }
+    ensure(&mut guard)?;
     guard
+        .manifest
         .tracks
         .get(track_id)
         .map(|entry| Duration::from_millis(entry.duration_ms))
 }
 
-/// Whether `path` is inside the offline cache directory (used by diagnostics).
+/// Whether `path` is inside the offline cache tree (used by diagnostics).
 pub fn contains(path: &Path) -> bool {
-    path.starts_with(root())
+    path.starts_with(base())
 }

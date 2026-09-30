@@ -6,9 +6,10 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{App, Context, Entity, Task};
-use tokio::task::AbortHandle;
 use music::Track;
+use tokio::task::AbortHandle;
 
+use crate::session::{Session, SessionEvent};
 use crate::{Io, Outcome, Toasts, join};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,10 +39,44 @@ pub struct Offline {
 }
 
 impl Offline {
-    pub fn new(io: Io) -> Self {
-        let mut ready = HashMap::new();
+    pub fn new(session: Entity<Session>, io: Io, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&session, |this, _, event, cx| match event {
+            SessionEvent::SignedIn | SessionEvent::SignedOut | SessionEvent::Reconnected => {
+                this.refresh(cx);
+            }
+            SessionEvent::LocalChanged => {}
+        })
+        .detach();
+
+        let mut this = Self {
+            io,
+            ready: HashMap::new(),
+            saving: HashSet::new(),
+            tasks: HashMap::new(),
+            aborts: HashMap::new(),
+        };
+        this.reload_ready();
+        this
+    }
+
+    /// Drop in-flight saves that belong to another account and rebuild `ready` from disk for
+    /// the signed-in Subsonic account (or clear it after logout).
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        music::offline::reload();
+        // Abort downloads: their account may no longer be the active one.
+        for (_, abort) in self.aborts.drain() {
+            abort.abort();
+        }
+        self.tasks.clear();
+        self.saving.clear();
+        self.reload_ready();
+        cx.notify();
+    }
+
+    fn reload_ready(&mut self) {
+        self.ready.clear();
         for cached in music::offline::list() {
-            ready.insert(
+            self.ready.insert(
                 cached.id.clone(),
                 OfflineEntry {
                     track: Track {
@@ -70,13 +105,6 @@ impl Offline {
                     error: None,
                 },
             );
-        }
-        Self {
-            io,
-            ready,
-            saving: HashSet::new(),
-            tasks: HashMap::new(),
-            aborts: HashMap::new(),
         }
     }
 
