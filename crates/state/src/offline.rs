@@ -4,6 +4,8 @@
 //! not the metadata cache in `storage::Cache`; it is the audio itself.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use gpui::{App, Context, Entity, Task};
 use music::Track;
@@ -133,16 +135,27 @@ impl Offline {
             log::warn!("offline: save is only available on Subsonic");
             return;
         }
-        for track in tracks {
+        let batch: Vec<Track> = tracks
+            .into_iter()
+            .filter(|track| {
+                track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !music::is_local_id(id) && !self.is_saved(id) && !self.saving.contains(id))
+            })
+            .collect();
+        if batch.is_empty() {
+            return;
+        }
+
+        let remaining = Arc::new(AtomicUsize::new(batch.len()));
+        let succeeded = Arc::new(AtomicUsize::new(0));
+        let failed = Arc::new(AtomicUsize::new(0));
+
+        for track in batch {
             let Some(id) = track.id.clone() else {
                 continue;
             };
-            if music::is_local_id(&id) {
-                continue;
-            }
-            if self.is_saved(&id) || self.saving.contains(&id) {
-                continue;
-            }
             self.saving.insert(id.clone());
             self.ready.insert(
                 id.clone(),
@@ -156,6 +169,9 @@ impl Offline {
             let io = self.io.clone();
             let held = track.clone();
             let task_id = id.clone();
+            let remaining = remaining.clone();
+            let succeeded = succeeded.clone();
+            let failed = failed.clone();
             let download = io.spawn(async move { music::offline::save(&held).await });
             self.aborts.insert(id.clone(), download.abort_handle());
             let task = cx.spawn(async move |this, cx| {
@@ -171,25 +187,33 @@ impl Offline {
                                 entry.bytes = cached.bytes;
                                 entry.error = None;
                             }
-                            Toasts::show(Outcome::Done, "toast-offline-saved", cx);
+                            succeeded.fetch_add(1, Ordering::SeqCst);
                         }
                         Err(error) => {
-                            // Cancelled removes intentionally; do not toast a failure.
                             let cancelled = format!("{error:#}").contains("cancelled")
                                 || format!("{error:#}").contains("canceled");
                             if cancelled {
                                 this.ready.remove(&task_id);
-                                cx.notify();
-                                return;
-                            }
-                            log::warn!("offline: cannot save {task_id}: {error:#}");
-                            if let Some(entry) = this.ready.get_mut(&task_id) {
-                                entry.status = OfflineStatus::Failed;
-                                entry.error = Some(format!("{error:#}"));
                             } else {
-                                this.ready.remove(&task_id);
+                                log::warn!("offline: cannot save {task_id}: {error:#}");
+                                if let Some(entry) = this.ready.get_mut(&task_id) {
+                                    entry.status = OfflineStatus::Failed;
+                                    entry.error = Some(format!("{error:#}"));
+                                } else {
+                                    this.ready.remove(&task_id);
+                                }
+                                failed.fetch_add(1, Ordering::SeqCst);
                             }
+                        }
+                    }
+                    // One toast for the whole batch, once the last save settles.
+                    if remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
+                        let fails = failed.load(Ordering::SeqCst);
+                        let oks = succeeded.load(Ordering::SeqCst);
+                        if fails > 0 {
                             Toasts::show(Outcome::Failed, "toast-offline-failed", cx);
+                        } else if oks > 0 {
+                            Toasts::show(Outcome::Done, "toast-offline-saved", cx);
                         }
                     }
                     cx.notify();
@@ -202,6 +226,8 @@ impl Offline {
     }
 
     pub fn remove_tracks(&mut self, track_ids: Vec<String>, cx: &mut Context<Self>) {
+        let mut succeeded = 0usize;
+        let mut failed = 0usize;
         for id in track_ids {
             // Abort the nested tokio download before (or while) removing files so a late
             // write cannot recreate the track after remove.
@@ -209,15 +235,23 @@ impl Offline {
                 abort.abort();
             }
             self.tasks.remove(&id);
-            if let Err(error) = music::offline::remove(&id) {
-                log::warn!("offline: cannot remove {id}: {error:#}");
-                Toasts::show(Outcome::Failed, "toast-offline-remove-failed", cx);
-                continue;
+            match music::offline::remove(&id) {
+                Ok(()) => {
+                    self.ready.remove(&id);
+                    self.saving.remove(&id);
+                    succeeded += 1;
+                }
+                Err(error) => {
+                    log::warn!("offline: cannot remove {id}: {error:#}");
+                    failed += 1;
+                }
             }
-            self.ready.remove(&id);
-            self.saving.remove(&id);
         }
-        Toasts::show(Outcome::Done, "toast-offline-removed", cx);
+        if failed > 0 {
+            Toasts::show(Outcome::Failed, "toast-offline-remove-failed", cx);
+        } else if succeeded > 0 {
+            Toasts::show(Outcome::Done, "toast-offline-removed", cx);
+        }
         cx.notify();
     }
 }
