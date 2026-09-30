@@ -3,7 +3,7 @@
 //! Inspired by Feishin's music-cache: an explicit "save offline" keeps the file, and playback
 //! prefers the cached copy when it is present. Automatic play-through caching is left for later.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -69,6 +69,37 @@ fn file_for(id: &str) -> PathBuf {
 fn held() -> &'static Mutex<Manifest> {
     static HELD: OnceLock<Mutex<Manifest>> = OnceLock::new();
     HELD.get_or_init(|| Mutex::new(load_manifest()))
+}
+
+fn cancelled() -> &'static Mutex<HashSet<String>> {
+    static CANCELLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn is_cancelled(track_id: &str) -> bool {
+    cancelled()
+        .lock()
+        .map(|set| set.contains(track_id))
+        .unwrap_or(false)
+}
+
+fn clear_cancelled(track_id: &str) {
+    if let Ok(mut set) = cancelled().lock() {
+        set.remove(track_id);
+    }
+}
+
+/// Abort an in-flight save for `track_id`: mark it cancelled and drop any partial file.
+/// The download task should also be aborted by the caller; this covers the race after the
+/// bytes have arrived but before the final rename.
+pub fn cancel(track_id: &str) {
+    if let Ok(mut set) = cancelled().lock() {
+        set.insert(track_id.to_owned());
+    }
+    let part = file_for(track_id).with_extension("part");
+    if part.exists() {
+        let _ = fs::remove_file(&part);
+    }
 }
 
 fn load_manifest() -> Manifest {
@@ -161,12 +192,16 @@ pub fn list() -> Vec<CachedTrack> {
 /// Download `track` from the signed-in Subsonic server and keep it for offline playback.
 pub async fn save(track: &Track) -> Result<CachedTrack> {
     let id = track.id.as_deref().context("the track has no id")?;
+    clear_cancelled(id);
     let Some(client) = client()? else {
         bail!("sign in to a Subsonic server to save tracks offline");
     };
     let server = server_key().context("sign in to a Subsonic server to save tracks offline")?;
 
     let bytes = client.download_track(id).await?;
+    if is_cancelled(id) {
+        bail!("download cancelled");
+    }
     if bytes.is_empty() {
         bail!("the server returned an empty file for {id}");
     }
@@ -175,13 +210,25 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
     fs::create_dir_all(&dir).context("cannot create the offline cache folder")?;
     let dest = file_for(id);
     let tmp = dest.with_extension("part");
+    if is_cancelled(id) {
+        bail!("download cancelled");
+    }
     {
         let mut file =
             fs::File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
         file.write_all(&bytes)?;
         file.sync_all()?;
     }
+    // Re-check after the body is on disk: remove may have raced the write.
+    if is_cancelled(id) {
+        let _ = fs::remove_file(&tmp);
+        bail!("download cancelled");
+    }
     fs::rename(&tmp, &dest).with_context(|| format!("cannot finalize {}", dest.display()))?;
+    if is_cancelled(id) {
+        let _ = fs::remove_file(&dest);
+        bail!("download cancelled");
+    }
 
     let entry = CachedTrack {
         id: id.to_owned(),
@@ -223,6 +270,7 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
 }
 
 pub fn remove(track_id: &str) -> Result<()> {
+    cancel(track_id);
     remove_file_only(track_id)?;
     let mut guard = held().lock().expect("offline cache lock");
     guard.tracks.remove(track_id);

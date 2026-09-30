@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{App, Context, Entity, Task};
+use tokio::task::AbortHandle;
 use music::Track;
 
 use crate::{Io, Outcome, Toasts, join};
@@ -32,6 +33,8 @@ pub struct Offline {
     /// In-flight downloads.
     saving: HashSet<String>,
     tasks: HashMap<String, Task<()>>,
+    /// Aborts the nested tokio download when the listener removes a saving track.
+    aborts: HashMap<String, AbortHandle>,
 }
 
 impl Offline {
@@ -73,6 +76,7 @@ impl Offline {
             ready,
             saving: HashSet::new(),
             tasks: HashMap::new(),
+            aborts: HashMap::new(),
         }
     }
 
@@ -124,11 +128,14 @@ impl Offline {
             let io = self.io.clone();
             let held = track.clone();
             let task_id = id.clone();
+            let download = io.spawn(async move { music::offline::save(&held).await });
+            self.aborts.insert(id.clone(), download.abort_handle());
             let task = cx.spawn(async move |this, cx| {
-                let result = join(io.spawn(async move { music::offline::save(&held).await })).await;
+                let result = join(download).await;
                 this.update(cx, |this, cx| {
                     this.saving.remove(&task_id);
                     this.tasks.remove(&task_id);
+                    this.aborts.remove(&task_id);
                     match result {
                         Ok(cached) => {
                             if let Some(entry) = this.ready.get_mut(&task_id) {
@@ -139,6 +146,14 @@ impl Offline {
                             Toasts::show(Outcome::Done, "toast-offline-saved", cx);
                         }
                         Err(error) => {
+                            // Cancelled removes intentionally; do not toast a failure.
+                            let cancelled = format!("{error:#}").contains("cancelled")
+                                || format!("{error:#}").contains("canceled");
+                            if cancelled {
+                                this.ready.remove(&task_id);
+                                cx.notify();
+                                return;
+                            }
                             log::warn!("offline: cannot save {task_id}: {error:#}");
                             if let Some(entry) = this.ready.get_mut(&task_id) {
                                 entry.status = OfflineStatus::Failed;
@@ -160,6 +175,12 @@ impl Offline {
 
     pub fn remove_tracks(&mut self, track_ids: Vec<String>, cx: &mut Context<Self>) {
         for id in track_ids {
+            // Abort the nested tokio download before (or while) removing files so a late
+            // write cannot recreate the track after remove.
+            if let Some(abort) = self.aborts.remove(&id) {
+                abort.abort();
+            }
+            self.tasks.remove(&id);
             if let Err(error) = music::offline::remove(&id) {
                 log::warn!("offline: cannot remove {id}: {error:#}");
                 Toasts::show(Outcome::Failed, "toast-offline-remove-failed", cx);
@@ -167,7 +188,6 @@ impl Offline {
             }
             self.ready.remove(&id);
             self.saving.remove(&id);
-            self.tasks.remove(&id);
         }
         Toasts::show(Outcome::Done, "toast-offline-removed", cx);
         cx.notify();
