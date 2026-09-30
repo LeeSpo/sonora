@@ -40,6 +40,8 @@ pub struct LoginView {
     usage: Entity<Usage>,
     secret: Entity<Input>,
     server: Entity<Input>,
+    remote: Entity<Input>,
+    prefer_remote: bool,
     username: Entity<Input>,
     password: Entity<Input>,
     credentials_for: Option<&'static str>,
@@ -57,6 +59,8 @@ impl LoginView {
             usage,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
+            remote: cx.new(|cx| Input::new("login-server-remote-hint", cx)),
+            prefer_remote: false,
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
             credentials_for: None,
@@ -97,7 +101,9 @@ impl LoginView {
 
     fn clear_credentials(&mut self, cx: &mut Context<Self>) {
         self.credentials_for = None;
+        self.prefer_remote = false;
         self.server.update(cx, |input, cx| input.set_text("", cx));
+        self.remote.update(cx, |input, cx| input.set_text("", cx));
         self.username.update(cx, |input, cx| input.set_text("", cx));
         self.password.update(cx, |input, cx| input.set_text("", cx));
     }
@@ -118,16 +124,24 @@ impl LoginView {
             return;
         };
         let server = self.server.read(cx).text().to_string();
+        let remote = self.remote.read(cx).text().to_string();
+        let prefer_remote = self.prefer_remote;
         let username = self.username.read(cx).text().to_string();
         let password = self.password.read(cx).text().to_string();
         if server.trim().is_empty() || username.trim().is_empty() || password.is_empty() {
             return;
         }
+        let remotes = match remote.trim().is_empty() {
+            true => Vec::new(),
+            false => vec![remote],
+        };
         self.clear_credentials(cx);
         self.start(
             slug,
             SignIn::Credentials {
                 server,
+                remotes,
+                prefer_remote,
                 username,
                 password,
             },
@@ -384,10 +398,20 @@ impl LoginView {
     }
 
     fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let prefer_remote = self.prefer_remote;
         Modal::new("server-prompt", t!("login-server-title"))
             .w(px(560.))
             .detail(t!("login-server-detail"))
             .child(self.server.clone())
+            .child(self.remote.clone())
+            .child(
+                Checkbox::new("prefer-remote", prefer_remote)
+                    .label(t!("login-server-prefer-remote"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.prefer_remote = !this.prefer_remote;
+                        cx.notify();
+                    })),
+            )
             .child(self.username.clone())
             .child(self.password.clone())
             .action(

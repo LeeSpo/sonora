@@ -99,7 +99,7 @@ fn persist(manifest: &Manifest) -> Result<()> {
 }
 
 fn server_key() -> Option<String> {
-    auth::load().map(|credentials| credentials.server)
+    auth::load().map(|credentials| credentials.account_key())
 }
 
 fn client() -> Result<Option<SubsonicClient>> {
@@ -149,7 +149,7 @@ pub fn list() -> Vec<CachedTrack> {
         return Vec::new();
     }
     let mut tracks: Vec<_> = guard.tracks.values().cloned().collect();
-    tracks.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
+    tracks.sort_by_key(|b| std::cmp::Reverse(b.saved_at));
     tracks
 }
 

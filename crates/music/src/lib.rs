@@ -520,6 +520,10 @@ pub enum SignIn {
     Path(Vec<PathBuf>),
     Credentials {
         server: String,
+        /// Extra base URLs for the same account (LAN vs public, …). Subsonic only.
+        remotes: Vec<String>,
+        /// Prefer remote / alternate addresses when probing (Feishin preferRemoteUrl).
+        prefer_remote: bool,
         username: String,
         password: String,
     },
@@ -654,6 +658,16 @@ pub trait MusicProvider: Send + Sync {
     }
     fn location(&self) -> Option<String> {
         None
+    }
+    /// Every base URL configured for the active account. Empty when the provider has one
+    /// fixed endpoint, or none stored.
+    fn locations(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Switch the active base URL among [`locations`]. Returns whether the stored pick
+    /// changed; the session should restore so the live client follows.
+    fn select_location(&self, _location: &str) -> Result<bool> {
+        Ok(false)
     }
     /// The host to open a connection to when checking whether the network is back. `None`
     /// where the provider needs no network, which is what keeps a local library from ever

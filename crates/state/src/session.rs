@@ -317,6 +317,39 @@ impl Session {
         self.restore(cx);
     }
 
+    /// Switch the active provider's base URL among its configured addresses, then restore
+    /// so the live client follows the pick.
+    pub fn select_location(&mut self, location: &str, cx: &mut Context<Self>) {
+        if self.is_pending() {
+            return;
+        }
+        let Some(active) = self.active else {
+            return;
+        };
+        match self.providers[active].select_location(location) {
+            Ok(true) => {
+                self.release(cx);
+                self.active = Some(active);
+                self.restore(cx);
+            }
+            Ok(false) => {}
+            Err(error) => log::warn!("session: cannot switch server address: {error:#}"),
+        }
+    }
+
+    /// Configured base URLs for the active provider, when it has more than one.
+    pub fn locations(&self) -> Vec<String> {
+        self.active
+            .map(|index| self.providers[index].locations())
+            .unwrap_or_default()
+    }
+
+    /// The active provider's current base URL or path, when it has one.
+    pub fn location(&self) -> Option<String> {
+        self.active
+            .and_then(|index| self.providers[index].location())
+    }
+
     pub fn provider_name(&self) -> Option<&'static str> {
         let provider = &self.providers[self.active?];
         Some(provider.name())

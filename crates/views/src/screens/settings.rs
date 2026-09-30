@@ -27,7 +27,7 @@ use state::{
 };
 use ui::{ActiveTheme as _, Deck, LEADING, Scrollbar, Scroller, eyebrow, snapped};
 use ui::{
-    Avatar, Button, Dismiss, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE,
+    Avatar, Button, Checkbox, Dismiss, InfoCard, Initials, Input, Look, MAX_FONT, MAX_LYRICS_SCALE,
     MAX_TRANSPARENCY, MIN_FONT, MIN_LYRICS_SCALE, MenuItem, Modal, Pace, Picker, Popovers, Radio,
     Rounding, Saver, Scrubber, ScrubberState, Separator, Skeleton, Stillness, Switch, TabBar, Text,
     Theme, ThemeKind, Vacancy, VisualizerStyle,
@@ -310,9 +310,13 @@ pub struct SettingsView {
     pending_sleep: Option<Option<Sleep>>,
     popovers: Popovers,
     server: Entity<Input>,
+    remote: Entity<Input>,
+    prefer_remote: bool,
     username: Entity<Input>,
     password: Entity<Input>,
     credentials_for: Option<&'static str>,
+    /// Whether the Subsonic multi-address picker is open.
+    server_urls_open: bool,
     secret: Entity<Input>,
     manual_secret: Option<(&'static str, &'static str)>,
     scrobbling: Entity<Scrobbling>,
@@ -413,9 +417,12 @@ impl SettingsView {
             pending_sleep: None,
             popovers: Popovers::default(),
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
+            remote: cx.new(|cx| Input::new("login-server-remote-hint", cx)),
+            prefer_remote: false,
             username: cx.new(|cx| Input::new("login-username-hint", cx)),
             password: cx.new(|cx| Input::new("login-password-hint", cx).masked()),
             credentials_for: None,
+            server_urls_open: false,
             secret: cx.new(|cx| Input::new("login-cookie-hint", cx)),
             manual_secret: None,
             sign_in_for: None,
@@ -3635,17 +3642,38 @@ impl SettingsView {
                 .into_any_element();
         }
 
-        Button::new(SharedString::from(format!("sign-out-{id}")))
-            .icon("icons/log-out.svg")
-            .tooltip("settings-sign-out")
-            .w(theme.metrics.control)
-            .disabled(pending)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.chosen = None;
-                this.session
-                    .update(cx, |session, cx| session.forget(slug, cx));
-            }))
+        let switch = slug == "subsonic"
+            && self.session.read(cx).provider_slug() == Some("subsonic")
+            && self.session.read(cx).locations().len() > 1;
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .when(switch, |this| {
+                this.child(
+                    Button::new(SharedString::from(format!("server-urls-{id}")))
+                        .icon("icons/link.svg")
+                        .tooltip("login-server-urls-title")
+                        .w(theme.metrics.control)
+                        .disabled(pending)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, _, cx| this.open_server_urls(cx))),
+                )
+            })
+            .child(
+                Button::new(SharedString::from(format!("sign-out-{id}")))
+                    .icon("icons/log-out.svg")
+                    .tooltip("settings-sign-out")
+                    .w(theme.metrics.control)
+                    .disabled(pending)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.chosen = None;
+                        this.session
+                            .update(cx, |session, cx| session.forget(slug, cx));
+                    })),
+            )
             .into_any_element()
     }
 
@@ -3687,6 +3715,9 @@ impl SettingsView {
     /// Closes the dialog that is up, topmost first, the way clicking outside it does. A
     /// prompt a sign-in raised takes the sign-in down with it.
     fn escape(&mut self, cx: &mut Context<Self>) {
+        if self.server_urls_open {
+            return self.close_server_urls(cx);
+        }
         if self.credentials_for.is_some() {
             return self.abandon_credentials(cx);
         }
@@ -3775,7 +3806,9 @@ impl SettingsView {
 
     fn clear_credentials(&mut self, cx: &mut Context<Self>) {
         self.credentials_for = None;
+        self.prefer_remote = false;
         self.server.update(cx, |input, cx| input.set_text("", cx));
+        self.remote.update(cx, |input, cx| input.set_text("", cx));
         self.username.update(cx, |input, cx| input.set_text("", cx));
         self.password.update(cx, |input, cx| input.set_text("", cx));
     }
@@ -3790,17 +3823,25 @@ impl SettingsView {
             return;
         };
         let server = self.server.read(cx).text().to_string();
+        let remote = self.remote.read(cx).text().to_string();
+        let prefer_remote = self.prefer_remote;
         let username = self.username.read(cx).text().to_string();
         let password = self.password.read(cx).text().to_string();
         if server.trim().is_empty() || username.trim().is_empty() || password.is_empty() {
             return;
         }
+        let remotes = match remote.trim().is_empty() {
+            true => Vec::new(),
+            false => vec![remote],
+        };
         self.clear_credentials(cx);
         self.session.update(cx, |session, cx| {
             session.sign_in(
                 slug,
                 SignIn::Credentials {
                     server,
+                    remotes,
+                    prefer_remote,
                     username,
                     password,
                 },
@@ -3810,10 +3851,20 @@ impl SettingsView {
     }
 
     fn credentials_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let prefer_remote = self.prefer_remote;
         Modal::new("settings-server-prompt", t!("login-server-title"))
             .w(px(560.))
             .detail(t!("login-server-detail"))
             .child(self.server.clone())
+            .child(self.remote.clone())
+            .child(
+                Checkbox::new("settings-prefer-remote", prefer_remote)
+                    .label(t!("login-server-prefer-remote"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.prefer_remote = !this.prefer_remote;
+                        cx.notify();
+                    })),
+            )
             .child(self.username.clone())
             .child(self.password.clone())
             .action(
@@ -3829,6 +3880,79 @@ impl SettingsView {
                     .on_click(cx.listener(|this, _, _, cx| this.submit_credentials(cx))),
             )
             .on_dismiss(cx.listener(|this, _, _, cx| this.abandon_credentials(cx)))
+    }
+
+    fn open_server_urls(&mut self, cx: &mut Context<Self>) {
+        if self.session.read(cx).locations().len() < 2 {
+            return;
+        }
+        self.server_urls_open = true;
+        cx.notify();
+    }
+
+    fn close_server_urls(&mut self, cx: &mut Context<Self>) {
+        self.server_urls_open = false;
+        cx.notify();
+    }
+
+    fn pick_server_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        let url = url.to_owned();
+        self.server_urls_open = false;
+        self.session
+            .update(cx, |session, cx| session.select_location(&url, cx));
+        cx.notify();
+    }
+
+    fn server_urls_prompt(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.session.read(cx).location();
+        let urls = self.session.read(cx).locations();
+        let theme = *cx.theme();
+        Modal::new("settings-server-urls", t!("login-server-urls-title"))
+            .w(px(560.))
+            .detail(t!("login-server-urls-detail"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children(urls.into_iter().map(|url| {
+                        let selected = current.as_deref() == Some(url.as_str());
+                        let pick = url.clone();
+                        div()
+                            .id(SharedString::from(format!("server-url-{url}")))
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .w_full()
+                            .p_2()
+                            .rounded(theme.radius)
+                            .border_1()
+                            .border_color(if selected {
+                                theme.primary
+                            } else {
+                                theme.border
+                            })
+                            .cursor_pointer()
+                            .hover(|this| this.bg(theme.secondary_hover))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(SharedString::from(url)),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.pick_server_url(&pick, cx);
+                            }))
+                    })),
+            )
+            .action(
+                Button::new("settings-cancel-server-urls")
+                    .ghost()
+                    .label(t!("common-cancel"))
+                    .on_click(cx.listener(|this, _, _, cx| this.close_server_urls(cx))),
+            )
+            .on_dismiss(cx.listener(|this, _, _, cx| this.close_server_urls(cx)))
     }
 
     fn start_manual(&mut self, slug: &'static str, provider: &'static str, cx: &mut Context<Self>) {
@@ -4430,7 +4554,10 @@ impl Render for SettingsView {
 
         // only one of these is ever up: a prompt the sign-in raised hides the choice behind
         // it, and the choice holds the veil until that prompt arrives
-        let taken = accounts.is_some() || manual_secret.is_some() || self.credentials_for.is_some();
+        let taken = accounts.is_some()
+            || manual_secret.is_some()
+            || self.credentials_for.is_some()
+            || self.server_urls_open;
         let sign_in_for = self.sign_in_for.filter(|_| !taken);
 
         // a dialog takes the key focus, since escape only reaches the page from inside it
@@ -4511,6 +4638,9 @@ impl Render for SettingsView {
             })
             .when(self.credentials_for.is_some(), |this| {
                 this.child(self.credentials_prompt(cx).into_any_element())
+            })
+            .when(self.server_urls_open, |this| {
+                this.child(self.server_urls_prompt(cx).into_any_element())
             })
             .when_some(self.scrobble_prompt, |this, service| {
                 this.child(self.scrobble_modal(service, cx).into_any_element())

@@ -37,6 +37,8 @@ const PLAYBACK_REPORT: &str = "playbackReport";
 #[derive(Clone)]
 pub struct SubsonicClient {
     client: Client,
+    /// Active base URL, kept so a failed call can invalidate the multi-address cache.
+    server: String,
     username: String,
     http: reqwest::Client,
     /// The cover art endpoint with the fixed signature already on it. The library client signs
@@ -75,6 +77,7 @@ impl SubsonicClient {
         );
         Ok(Self {
             client,
+            server,
             username,
             http: reqwest::Client::new(),
             covers,
@@ -279,11 +282,16 @@ impl MusicApi for SubsonicClient {
     }
 
     async fn profile(&self) -> Result<UserProfile> {
-        self.client
-            .ping()
-            .await
-            .context("cannot reach the subsonic server")?;
-        Ok(wire::profile(self.username.clone()))
+        match self.client.ping().await {
+            Ok(()) => Ok(wire::profile(self.username.clone())),
+            Err(error) => {
+                let reason = format!("{error:#}");
+                if crate::trouble::offline(&reason) {
+                    crate::subsonic::connection::invalidate(Some(&self.server));
+                }
+                Err(error).context("cannot reach the subsonic server")
+            }
+        }
     }
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
