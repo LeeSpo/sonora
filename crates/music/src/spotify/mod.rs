@@ -67,6 +67,7 @@ impl SpotifyProvider {
                 pins: true,
                 ..Capabilities::ALL
             },
+            offline: false,
         })
     }
 }

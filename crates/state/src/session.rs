@@ -443,6 +443,7 @@ impl Session {
             let restored = join(io.spawn(async move { provider.restore().await })).await;
 
             this.update(cx, |this, cx| match restored {
+                Ok(Some(session)) if session.offline => this.carry_on_offline(session, active, cx),
                 Ok(Some(session)) => this.signed_in(session, active, cx),
                 Ok(None) => {
                     this.state = SessionState::SignedOut;
@@ -691,6 +692,46 @@ impl Session {
         cx.emit(SessionEvent::SignedOut);
     }
 
+    /// Apply api / playback / capabilities from a provider session without changing sign-in state.
+    fn install_provider_session(&mut self, session: ProviderSession, _cx: &mut Context<Self>) {
+        self.catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
+        self.client = Some(session.api);
+        self.playback = Some(session.playback);
+        self.shape = session.shape;
+        self.authenticated = session.authenticated;
+        self.capabilities = session.capabilities;
+    }
+
+    /// Cold-start when the server is unreachable but offline audio is on disk: install the
+    /// Subsonic playback engine, stay [`SessionState::Offline`] so restore retries when the
+    /// network returns, and emit SignedIn so the player binds the engine.
+    fn carry_on_offline(
+        &mut self,
+        session: ProviderSession,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.active = Some(index);
+        self.awaiting = None;
+        self.error = None;
+        let slug = self.providers[index].slug();
+        self.settings.update(cx, |settings, cx| {
+            settings.set_provider(slug, cx);
+        });
+        self.install_provider_session(session, cx);
+        let failure = Failure {
+            problem: Some(music::SignInProblem::Network),
+            summary: "the provider could not be reached".into(),
+            detail: None,
+        };
+        log::warn!("session: carrying on offline with cached Subsonic playback");
+        Network::failed(&failure.summary, cx);
+        self.state = SessionState::Offline(failure);
+        self.attempt = 0;
+        cx.notify();
+        cx.emit(SessionEvent::SignedIn);
+    }
+
     fn signed_in(&mut self, session: ProviderSession, index: usize, cx: &mut Context<Self>) {
         let replaced = self
             .resume
@@ -706,13 +747,9 @@ impl Session {
         self.settings.update(cx, |settings, cx| {
             settings.set_provider(slug, cx);
         });
-        self.catalog = Some(Arc::new(CatalogSource::new(session.api.clone())));
-        self.client = Some(session.api);
-        self.playback = Some(session.playback);
-        self.shape = session.shape;
-        self.authenticated = session.authenticated;
-        self.capabilities = session.capabilities;
-        self.state = SessionState::SignedIn(session.profile);
+        let profile = session.profile.clone();
+        self.install_provider_session(session, cx);
+        self.state = SessionState::SignedIn(profile);
         self.attempt = 0;
         self.start_heartbeat(cx);
         cx.notify();
@@ -821,6 +858,18 @@ impl Session {
         }
         if restoring && failure.offline() && self.stored_active() {
             log::warn!("session: the account could not be reached, carrying on offline");
+            // Cold-start offline: keep Subsonic playback when cached audio exists even though
+            // restore_stored returned Err (e.g. the client could not be built earlier).
+            if self.playback.is_none()
+                && self.provider_slug() == Some("subsonic")
+                && let Some(session) = music::subsonic::try_offline_cache_session()
+            {
+                self.install_provider_session(session, cx);
+                self.state = SessionState::Offline(failure);
+                cx.notify();
+                cx.emit(SessionEvent::SignedIn);
+                return;
+            }
             self.state = SessionState::Offline(failure);
             cx.notify();
             return;

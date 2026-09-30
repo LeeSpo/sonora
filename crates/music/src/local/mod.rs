@@ -70,6 +70,7 @@ impl LocalProvider {
                 library: false,
                 pins: false,
             },
+            offline: false,
         })
     }
 }

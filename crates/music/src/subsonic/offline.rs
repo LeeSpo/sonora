@@ -118,6 +118,11 @@ fn client() -> Result<Option<SubsonicClient>> {
     )?))
 }
 
+/// Whether any finished offline copy is on disk for the signed-in server.
+pub fn any_ready() -> bool {
+    !list().is_empty()
+}
+
 /// Whether a finished offline copy of `track_id` is on disk for the signed-in server.
 pub fn is_cached(track_id: &str) -> bool {
     path(track_id).is_some()

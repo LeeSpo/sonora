@@ -80,6 +80,7 @@ fn session(client: DeezerClient, profile: crate::UserProfile) -> ProviderSession
             playcounts: false,
             ..Capabilities::ALL
         },
+        offline: false,
     }
 }
 

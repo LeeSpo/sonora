@@ -136,6 +136,7 @@ impl YouTubeProvider {
                 playcounts: false,
                 ..Capabilities::ALL
             },
+            offline: false,
         }
     }
 
@@ -154,6 +155,7 @@ impl YouTubeProvider {
                 playcounts: false,
                 ..Capabilities::ALL
             },
+            offline: false,
         }
     }
 

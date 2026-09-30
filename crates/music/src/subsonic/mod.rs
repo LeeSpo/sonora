@@ -78,6 +78,7 @@ impl SubsonicProvider {
             shape: Shape::Catalog,
             authenticated: true,
             capabilities: Capabilities::ALL,
+            offline: false,
         })
     }
 
@@ -116,6 +117,7 @@ impl SubsonicProvider {
                 shape: Shape::Catalog,
                 authenticated: true,
                 capabilities: Capabilities::ALL,
+                offline: false,
             })),
             Err(error) if crate::trouble::offline(&format!("{error:#}")) => {
                 // Current pick failed: invalidate and try each remaining address once.
@@ -147,8 +149,16 @@ impl SubsonicProvider {
                             shape: Shape::Catalog,
                             authenticated: true,
                             capabilities: Capabilities::ALL,
+                            offline: false,
                         }));
                     }
+                }
+                if let Some(session) = Self::offline_cache_session(&remembered, &signature) {
+                    log::warn!(
+                        "subsonic: unreachable; restoring playback from {} offline track(s)",
+                        offline::list().len()
+                    );
+                    return Ok(Some(session));
                 }
                 Err(error)
             }
@@ -158,6 +168,53 @@ impl SubsonicProvider {
             }
         }
     }
+
+    /// A session that can play saved offline audio without probing the server. Used on cold
+    /// start when every configured address is unreachable and the listener already has a cache.
+    fn offline_cache_session(
+        remembered: &auth::Credentials,
+        signature: &auth::Signature,
+    ) -> Option<ProviderSession> {
+        session_from_offline_cache(remembered, signature)
+    }
+}
+
+/// Build a Subsonic session from stored credentials when offline audio is already on disk.
+/// Does not probe the network. Used by restore and by [`state::Session`] on Offline.
+pub(crate) fn session_from_offline_cache(
+    remembered: &auth::Credentials,
+    signature: &auth::Signature,
+) -> Option<ProviderSession> {
+    if !offline::any_ready() {
+        return None;
+    }
+    let client = SubsonicClient::new(
+        remembered.server.clone(),
+        remembered.username.clone(),
+        remembered.password.clone(),
+        signature,
+    )
+    .ok()?;
+    Some(ProviderSession {
+        profile: wire::profile(remembered.username.clone()),
+        api: Arc::new(client.clone()),
+        playback: Arc::new(Factory::new(client)),
+        shape: Shape::Catalog,
+        authenticated: true,
+        capabilities: Capabilities::ALL,
+        offline: true,
+    })
+}
+
+/// Cold-start helper: load stored Subsonic credentials and open offline-cache playback if any.
+pub fn try_offline_cache_session() -> Option<ProviderSession> {
+    let mut remembered = auth::load()?;
+    if remembered.signature.is_none() {
+        remembered.signature = Some(auth::sign(&remembered.username, &remembered.password));
+        let _ = auth::store(&remembered);
+    }
+    let signature = remembered.signature.clone()?;
+    session_from_offline_cache(&remembered, &signature)
 }
 
 impl Default for SubsonicProvider {

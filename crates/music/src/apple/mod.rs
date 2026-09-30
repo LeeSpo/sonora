@@ -109,6 +109,7 @@ fn session(client: AppleClient, profile: crate::UserProfile) -> ProviderSession 
             pins: true,
             ..Capabilities::NONE
         },
+        offline: false,
     }
 }
 

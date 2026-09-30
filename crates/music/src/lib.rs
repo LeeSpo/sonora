@@ -510,6 +510,9 @@ pub struct ProviderSession {
     pub shape: Shape,
     pub authenticated: bool,
     pub capabilities: Capabilities,
+    /// Restored without reaching the server. Only cached offline audio can play until the
+    /// network returns and the session is restored for real.
+    pub offline: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
