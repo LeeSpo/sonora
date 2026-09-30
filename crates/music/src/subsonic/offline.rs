@@ -255,14 +255,6 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
     };
     let server = server_key().context("sign in to a Subsonic server to save tracks offline")?;
 
-    let bytes = client.download_track(id).await?;
-    if is_cancelled(id) {
-        bail!("download cancelled");
-    }
-    if bytes.is_empty() {
-        bail!("the server returned an empty file for {id}");
-    }
-
     let dir = root_for(&server);
     fs::create_dir_all(&dir).context("cannot create the offline cache folder")?;
     let dest = file_for_in(&dir, id);
@@ -270,11 +262,34 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
     if is_cancelled(id) {
         bail!("download cancelled");
     }
+
+    let response = client.open_download(id).await?;
+    if is_cancelled(id) {
+        bail!("download cancelled");
+    }
+    let mut response = response;
+    let mut written: u64 = 0;
     {
         let mut file =
             fs::File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
-        file.write_all(&bytes)?;
+        while let Some(chunk) = response.chunk().await.context("download stream broke")? {
+            if is_cancelled(id) {
+                drop(file);
+                let _ = fs::remove_file(&tmp);
+                bail!("download cancelled");
+            }
+            if chunk.is_empty() {
+                continue;
+            }
+            file.write_all(&chunk)
+                .with_context(|| format!("cannot write {}", tmp.display()))?;
+            written += chunk.len() as u64;
+        }
         file.sync_all()?;
+    }
+    if written == 0 {
+        let _ = fs::remove_file(&tmp);
+        bail!("the server returned an empty file for {id}");
     }
     // Re-check after the body is on disk: remove may have raced the write.
     if is_cancelled(id) {
@@ -293,7 +308,7 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
         artists: track.artists.clone(),
         album: track.album.clone(),
         duration_ms: u64::try_from(track.duration.as_millis()).unwrap_or(0),
-        bytes: bytes.len() as u64,
+        bytes: written,
         saved_at: now(),
         file: dest
             .file_name()
@@ -352,11 +367,11 @@ fn now() -> i64 {
         .as_secs() as i64
 }
 
-/// Read a cached file's bytes for playback. Returns `None` when the track is not saved.
-pub fn read_cached(track_id: &str) -> Option<(PathBuf, Vec<u8>)> {
+/// Path of a ready offline file for playback without loading it into RAM.
+pub fn cached_file(track_id: &str) -> Option<PathBuf> {
     let path = path(track_id)?;
-    let bytes = fs::read(&path).ok()?;
-    (!bytes.is_empty()).then_some((path, bytes))
+    let meta = fs::metadata(&path).ok()?;
+    (meta.is_file() && meta.len() > 0).then_some(path)
 }
 
 /// Length recorded when the track was saved, so playback does not need the network.

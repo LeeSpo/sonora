@@ -45,6 +45,9 @@ pub struct SubsonicClient {
     /// every url afresh, which would give one cover a new url on every conversion and defeat
     /// every image cache between here and the screen.
     covers: String,
+    /// The download endpoint with the fixed signature already on it, for streaming originals
+    /// to the offline cache without buffering the whole body in RAM.
+    downloads: String,
     /// Whether the server takes `reportPlayback`, asked the first time a report goes out.
     playback_report: Arc<OnceCell<bool>>,
 }
@@ -69,18 +72,21 @@ impl SubsonicClient {
         let client = Client::new(&server, Auth::token(&username, password))
             .context("cannot parse the subsonic server address")?
             .with_client_name(CLIENT_NAME);
-        let covers = format!(
-            "{server}/rest/getCoverArt?u={}&t={}&s={}&v={API_VERSION}&c={CLIENT_NAME}&f=json",
+        let auth = format!(
+            "u={}&t={}&s={}&v={API_VERSION}&c={CLIENT_NAME}&f=json",
             escape::component(&username),
             escape::component(&signature.token),
             escape::component(&signature.salt),
         );
+        let covers = format!("{server}/rest/getCoverArt?{auth}");
+        let downloads = format!("{server}/rest/download?{auth}");
         Ok(Self {
             client,
             server,
             username,
             http: reqwest::Client::new(),
             covers,
+            downloads,
             playback_report: Arc::default(),
         })
     }
@@ -960,12 +966,18 @@ impl SubsonicClient {
             .with_context(|| format!("cannot load lyrics for {track_id}"))
     }
 
-    /// Downloads the original audio file for offline storage.
-    pub async fn download_track(&self, track_id: &str) -> Result<bytes::Bytes> {
-        self.client
-            .download(track_id)
+    /// Opens the original audio download and answers once the response headers are in; the
+    /// body is still on its way. Used to stream into the offline cache without holding the
+    /// whole file in RAM.
+    pub async fn open_download(&self, track_id: &str) -> Result<reqwest::Response> {
+        let url = format!("{}&id={}", self.downloads, escape::component(track_id));
+        self.http
+            .get(url)
+            .send()
             .await
-            .with_context(|| format!("cannot download {track_id}"))
+            .with_context(|| format!("cannot download {track_id}"))?
+            .error_for_status()
+            .with_context(|| format!("the server refused the download for {track_id}"))
     }
 
     /// Opens the audio of a track and answers once the response headers are in; the body is
