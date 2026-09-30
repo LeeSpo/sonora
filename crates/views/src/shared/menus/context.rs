@@ -473,7 +473,9 @@ impl ItemMenu {
         });
 
         let streaming = !imported && !barren;
-        let offline_item = streaming.then(|| {
+        // Offline audio is Subsonic / Navidrome only; hide the item on every other provider.
+        let subsonic = Sonora::global(cx).session.read(cx).provider_slug() == Some("subsonic");
+        let offline_item = (streaming && subsonic).then(|| {
             let offline = Sonora::global(cx).offline.clone();
             let all_saved = ids.iter().all(|id| offline.read(cx).is_saved(id));
             let any_saving = ids.iter().any(|id| offline.read(cx).is_saving(id));

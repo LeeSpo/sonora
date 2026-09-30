@@ -97,6 +97,10 @@ impl Offline {
 
     /// Save one or more Subsonic tracks for offline playback.
     pub fn save_tracks(&mut self, tracks: Vec<Track>, cx: &mut Context<Self>) {
+        if crate::Sonora::global(cx).session.read(cx).provider_slug() != Some("subsonic") {
+            log::warn!("offline: save is only available on Subsonic");
+            return;
+        }
         for track in tracks {
             let Some(id) = track.id.clone() else {
                 continue;
