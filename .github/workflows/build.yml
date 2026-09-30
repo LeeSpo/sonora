@@ -1,0 +1,239 @@
+# Fork CI: Mac (+ Windows) artifact builds for the lyrics/offline feature branch.
+# Adapted from sonorahq/sonora .github/workflows/release.yml (build + macos bundle).
+name: build
+
+on:
+  push:
+    branches: [feat/navidrome-lyrics-offline-cache]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  RUST_BACKTRACE: 1
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            arch: x64compatible
+            setup: Sonora-Setup
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: name the artifact
+        id: meta
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*) version="$GITHUB_REF_NAME" ;;
+            *) version="${GITHUB_SHA:0:7}" ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          cache-targets: false
+          cache-on-failure: true
+
+      - name: build
+        run: cargo build --release --locked --package sonora --target ${{ matrix.target }}
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      - name: stage the executable
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          case "$RUNNER_OS" in
+            macOS)
+              cp \
+                "target/$TARGET/release/sonora" \
+                "dist/sonora-$TARGET"
+              ;;
+            Windows)
+              cp \
+                "target/$TARGET/release/sonora.exe" \
+                "dist/sonora-$VERSION-$TARGET.exe"
+              ;;
+            *)
+              cp \
+                "target/$TARGET/release/sonora" \
+                "dist/sonora-$VERSION-$TARGET"
+              ;;
+          esac
+
+      - name: install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: build the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          SONORA_ARCH: ${{ matrix.arch }}
+          SONORA_SETUP: ${{ matrix.setup }}
+        run: |
+          $number = $env:VERSION.TrimStart("v")
+          if ($number -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') {
+            $number = "0.0.0"
+          }
+          $env:SONORA_VERSION = $number
+          $env:SONORA_EXE = (Resolve-Path "target/$env:TARGET/release/sonora.exe").Path
+          $env:SONORA_DIST = (Resolve-Path "dist").Path
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "scripts/windows/sonora.iss"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "${{ runner.os == 'macOS' && format('darwin-{0}', matrix.target) || format('build-{0}', matrix.target) }}"
+          path: dist/*
+          if-no-files-found: error
+
+  bundle:
+    name: macos app bundle
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: name the artifact
+        id: meta
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              version="$GITHUB_REF_NAME"
+              number="${GITHUB_REF_NAME#v}"
+              ;;
+            *)
+              version="${GITHUB_SHA:0:7}"
+              number="0.0.0"
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: darwin-*
+          path: darwin
+          merge-multiple: true
+
+      - name: assemble the bundle
+        shell: bash
+        env:
+          NUMBER: ${{ steps.meta.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            Sonora.app/Contents/MacOS \
+            Sonora.app/Contents/Resources
+
+          lipo -create \
+            -output Sonora.app/Contents/MacOS/sonora \
+            darwin/sonora-aarch64-apple-darwin \
+            darwin/sonora-x86_64-apple-darwin
+          chmod +x Sonora.app/Contents/MacOS/sonora
+          lipo -info Sonora.app/Contents/MacOS/sonora
+
+          cp \
+            assets/macos/sonora.icns \
+            Sonora.app/Contents/Resources/
+
+          cp \
+            COPYING \
+            Sonora.app/Contents/Resources/LICENSE
+
+          cp \
+            THIRD-PARTY.md \
+            Sonora.app/Contents/Resources/
+
+          cp \
+            assets/fonts/LICENSE.txt \
+            Sonora.app/Contents/Resources/LICENSE.Inter
+
+          mkdir -p Sonora.app/Contents/Resources/icons
+          cp assets/icons/LICENSE Sonora.app/Contents/Resources/icons/LICENSE
+          for licence in assets/icons/*/LICENSE; do
+            pack="$(basename "$(dirname "$licence")")"
+            cp "$licence" "Sonora.app/Contents/Resources/icons/LICENSE.$pack"
+          done
+
+          sed \
+            "s/@VERSION@/$NUMBER/g" \
+            assets/macos/Info.plist \
+            > Sonora.app/Contents/Info.plist
+
+          plutil -lint Sonora.app/Contents/Info.plist
+
+      - name: sign the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          codesign \
+            --force \
+            --sign - \
+            Sonora.app
+
+          codesign \
+            --verify \
+            --strict \
+            --verbose=2 \
+            Sonora.app
+
+      - name: create the disk image
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist staging
+          cp -R Sonora.app staging/
+          ln -s /Applications staging/Applications
+          megabytes=$(du -ms staging | cut -f1)
+          hdiutil create \
+            -volname Sonora \
+            -srcfolder staging \
+            -size "$((megabytes + 128))m" \
+            -ov \
+            -format UDZO \
+            "dist/sonora-$VERSION-macos.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-macos
+          path: dist/*
+          if-no-files-found: error
