@@ -1,4 +1,4 @@
-# Fork CI: Mac (+ Windows) artifact builds for the lyrics/offline feature branch.
+# Fork CI: Mac arm64 (+ Windows) artifact builds for the lyrics/offline feature branch.
 # Adapted from sonorahq/sonora .github/workflows/release.yml (build + macos bundle).
 name: build
 
@@ -28,8 +28,6 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-15
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             arch: x64compatible
@@ -161,12 +159,8 @@ jobs:
             Sonora.app/Contents/MacOS \
             Sonora.app/Contents/Resources
 
-          lipo -create \
-            -output Sonora.app/Contents/MacOS/sonora \
-            darwin/sonora-aarch64-apple-darwin \
-            darwin/sonora-x86_64-apple-darwin
+          cp darwin/sonora-aarch64-apple-darwin Sonora.app/Contents/MacOS/sonora
           chmod +x Sonora.app/Contents/MacOS/sonora
-          lipo -info Sonora.app/Contents/MacOS/sonora
 
           cp \
             assets/macos/sonora.icns \
