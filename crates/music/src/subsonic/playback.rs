@@ -144,15 +144,17 @@ impl Fetch for Subsonic {
         if let Some(path) = offline::cached_file(id) {
             let path_for_probe = path.clone();
             let recorded = offline::cached_duration(id);
-            let length = tokio::task::spawn_blocking(move || {
-                Ok::<_, anyhow::Error>(decode_file(&path_for_probe)?.total_duration())
+            let (length, loudness) = tokio::task::spawn_blocking(move || {
+                let length = decode_file(&path_for_probe)?.total_duration();
+                let loudness = crate::local::tags::loudness(&path_for_probe);
+                Ok::<_, anyhow::Error>((length, loudness))
             })
             .await
             .context("cannot probe the offline file")??;
 
             let details = Details {
                 duration: recorded.or(length),
-                loudness: None,
+                loudness,
             };
             return Ok(Loaded {
                 kind: Kind::File(path),

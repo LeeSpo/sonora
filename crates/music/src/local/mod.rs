@@ -5,7 +5,7 @@ mod lyrics;
 mod playback;
 mod scan;
 mod store;
-mod tags;
+pub(crate) mod tags;
 mod wire;
 
 pub use lyrics::LocalLyrics;
