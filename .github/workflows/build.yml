@@ -4,7 +4,7 @@ name: build
 
 on:
   push:
-    branches: [feat/navidrome-lyrics-offline-cache]
+    branches: [main, feat/navidrome-lyrics-offline-cache]
   workflow_dispatch:
 
 concurrency:
