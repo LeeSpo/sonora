@@ -4,43 +4,42 @@ use gpui::{
 };
 use i18n::t;
 use music::Track;
-use state::{History, HistoryState, Playback};
+use state::{Offline, Playback};
 use ui::{
-    ActiveTheme as _, Button, Listing as _, Modal, Scrollbar, Scroller, TableDelegate, TableEvent,
-    TableState, runtime, table, vacant,
+    ActiveTheme as _, Listing as _, Scrollbar, Scroller, TableDelegate, TableEvent, TableState, runtime, table,
+    vacant,
 };
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, PageHero};
 use crate::shared::page;
-use crate::shared::tracks::{HISTORY_COLUMNS, TrackSource, Tracks, drop_picked};
+use crate::shared::tracks::{LIBRARY_COLUMNS, TrackSource, Tracks};
 
-struct HistoryTracks(Entity<History>);
+struct OfflineTracks(Entity<Offline>);
 
-impl Tracks for HistoryTracks {
+impl Tracks for OfflineTracks {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
         self.0.read(cx).tracks()
     }
 
-    fn is_loading(&self, cx: &App) -> bool {
-        matches!(self.0.read(cx).state(), HistoryState::Loading)
+    fn is_loading(&self, _cx: &App) -> bool {
+        false
     }
 }
 
-pub(crate) struct HistoryView {
-    history: Entity<History>,
+pub(crate) struct OfflineView {
+    offline: Entity<Offline>,
     playback: Entity<Playback>,
     width: Pixels,
     scrollbar: Entity<Scrollbar>,
     table: Entity<TableState<TrackSource>>,
     toolbar: Entity<Toolbar>,
-    clearing: bool,
 }
 
-impl HistoryView {
+impl OfflineView {
     pub(crate) fn new(
-        history: Entity<History>,
+        offline: Entity<Offline>,
         playback: Entity<Playback>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -52,25 +51,18 @@ impl HistoryView {
         let table = cx.new(|cx| {
             let menu = cx.new(|_| Scrollbar::inset().watching(id));
             let source = TrackSource::new(
-                HISTORY_COLUMNS,
-                HistoryTracks(history.clone()),
+                LIBRARY_COLUMNS,
+                OfflineTracks(offline.clone()),
                 playback.clone(),
                 menu,
                 cx,
             )
-            .with_history(history.clone())
             .table(cx.weak_entity());
             TableState::new(TableDelegate::new(source, width, cx), cx).follow(scroll)
         });
 
-        cx.observe(&history, |this, _, cx| {
-            this.table.rebuild(cx);
-            cx.notify();
-        })
-        .detach();
-        let offline = state::Offline::global(cx);
         cx.observe(&offline, |this, _, cx| {
-            this.table.refresh(cx);
+            this.table.rebuild(cx);
             cx.notify();
         })
         .detach();
@@ -86,42 +78,34 @@ impl HistoryView {
             TableEvent::Activated(display) => {
                 page::play_or_toggle(&this.table, &this.playback, *display, cx);
             }
-            TableEvent::Removed => drop_picked(&this.table, cx),
             _ => {}
         })
         .detach();
 
         let toolbar = Toolbar::searchable(&cx.entity(), cx);
         Self {
-            history,
+            offline,
             playback,
             width,
             scrollbar,
             table,
             toolbar,
-            clearing: false,
         }
-    }
-
-    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.history.update(cx, |history, cx| history.refresh(cx));
     }
 
     fn note(&self, cx: &App) -> Option<SharedString> {
-        let history = self.history.read(cx);
-        match history.state() {
-            HistoryState::Loading => None,
-            HistoryState::Failed => Some(t!("history-not-loaded")),
-            _ if self.table.row_count(cx) > 0 => None,
-            _ if self.table.filtering(cx) => Some(t!("library-no-matches")),
-            _ => Some(t!("history-empty")),
+        if self.table.row_count(cx) > 0 {
+            return None;
         }
+        if self.table.filtering(cx) {
+            return Some(t!("library-no-matches"));
+        }
+        Some(t!("offline-empty"))
     }
 
     fn header(&self, cx: &mut Context<Self>) -> AnyElement {
         let (count, duration) = {
-            let history = self.history.read(cx);
-            let tracks = history.tracks();
+            let tracks = self.offline.read(cx).tracks();
             let duration: std::time::Duration = tracks.iter().map(|track| track.duration).sum();
             (tracks.len(), duration)
         };
@@ -130,55 +114,16 @@ impl HistoryView {
             strip = strip.text(runtime(duration));
         }
 
-        PageHero::new("history-hero", t!("nav-history"))
-            .fallback("icons/rotate-ccw-clock.svg")
+        PageHero::new("offline-hero", t!("nav-offline"))
+            .fallback("icons/download.svg")
             .accent()
             .eyebrow(t!("detail-playlist"))
             .meta(strip)
-            .actions(
-                div().flex().items_center().child(
-                    Button::new("clear-history")
-                        .outline()
-                        .icon("icons/trash-2.svg")
-                        .label(t!("history-clear"))
-                        .disabled(count == 0)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.clearing = true;
-                            cx.notify();
-                        })),
-                ),
-            )
             .into_any_element()
-    }
-
-    fn confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Modal::new("clear-history", t!("history-clear-title"))
-            .detail(t!("history-clear-confirm"))
-            .action(
-                Button::new("cancel-clear-history")
-                    .ghost()
-                    .label(t!("common-cancel"))
-                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-            )
-            .action(
-                Button::new("apply-clear-history")
-                    .destructive()
-                    .label(t!("common-delete"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.history.update(cx, |history, cx| history.clear(cx));
-                        this.dismiss(cx);
-                    })),
-            )
-            .on_dismiss(cx.listener(|this, _, _, cx| this.dismiss(cx)))
-    }
-
-    fn dismiss(&mut self, cx: &mut Context<Self>) {
-        self.clearing = false;
-        cx.notify();
     }
 }
 
-impl Render for HistoryView {
+impl Render for OfflineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.table.claim(cx);
         let inset = cx.theme().metrics.inset;
@@ -194,32 +139,29 @@ impl Render for HistoryView {
             .update(cx, |table, _| table.set_viewport(viewport));
 
         let note = self.note(cx);
-        let page = Scroller::new("history-page", &self.scrollbar)
+        let page = Scroller::new("offline-page", &self.scrollbar)
             .pt(inset)
             .pb(inset)
             .child(div().px(inset).child(self.header(cx)))
             .child(table(&self.table))
             .when_some(note, |this, note| this.child(vacant(note, cx)));
 
-        div()
-            .size_full()
-            .child(page)
-            .when(self.clearing, |this| this.child(self.confirmation(cx)))
+        div().size_full().child(page)
     }
 }
 
-impl Searchable for HistoryView {
+impl Searchable for OfflineView {
     fn search(&mut self, query: &str, cx: &mut Context<Self>) {
         self.table.set_query(query, cx);
         cx.notify();
     }
 
     fn hint() -> SharedString {
-        "filter-history".into()
+        "filter-offline".into()
     }
 }
 
-impl Tooled for HistoryView {
+impl Tooled for OfflineView {
     fn toolbar(&self) -> Entity<Toolbar> {
         self.toolbar.clone()
     }

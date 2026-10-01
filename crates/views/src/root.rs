@@ -24,12 +24,13 @@ use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
     Adaptive, ArtistView, DetailView, FullscreenView, GenreView, HistoryView, HomeView,
-    LibraryView, LoginView, SettingsView, SongView, UserView,
+    LibraryView, LoginView, OfflineView, SettingsView, SongView, UserView,
 };
 
 struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
+    offline: Entity<OfflineView>,
     library: Entity<LibraryView>,
     local: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
@@ -166,6 +167,8 @@ impl Root {
         let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
+        let offline_store = Sonora::global(cx).offline.clone();
+        let offline = cx.new(|cx| OfflineView::new(offline_store, playback.clone(), window, cx));
 
         let search_library = library.clone();
 
@@ -278,6 +281,7 @@ impl Root {
             screens: Screens {
                 home,
                 history,
+                offline,
                 library: library_view,
                 local: local_view,
                 artist: None,
@@ -528,6 +532,11 @@ impl Root {
                 history.update(cx, |history, cx| history.refresh(cx));
                 toolbar = Some(history.read(cx).toolbar());
                 history.into()
+            }
+            Destination::Offline => {
+                let offline = self.screens.offline.clone();
+                toolbar = Some(offline.read(cx).toolbar());
+                offline.into()
             }
             Destination::Local(tab) => {
                 let local = self.screens.local.clone();

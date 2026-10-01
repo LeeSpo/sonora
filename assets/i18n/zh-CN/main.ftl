@@ -29,6 +29,7 @@ nav-albums = 专辑
 nav-playlists = 播放列表
 nav-artists = 歌手
 nav-local = 本地音乐
+nav-offline = 已下载
 nav-back = 返回
 nav-forward = 前进
 nav-sidebar = 切换侧边栏
@@ -220,6 +221,8 @@ fullscreen-artwork = 封面
 # filters
 filter-history = 筛选收听历史
 history-empty = 你播放的歌曲会显示在这里。
+offline-empty = 你保存到离线的歌曲会显示在这里。
+filter-offline = 筛选已下载曲目
 history-not-loaded = 收听历史加载失败。
 history-clear = 清空历史记录
 history-clear-title = 清空收听历史

@@ -15,14 +15,14 @@ use gpui::{Window, div, px};
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsTab, navigate,
 };
-use state::{AppSettings, Library, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora};
+use state::{AppSettings, Library, Offline, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 
 /// The one drag list the pinned section keeps, so a pin dropped anywhere in it lands in order.
 const PINS: &str = "sidebar-pins";
 
-const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
+const NAV: [(Option<NavEntry>, &str, Destination); 7] = [
     (Some(NavEntry::Home), "icons/house.svg", Destination::Home),
     (
         Some(NavEntry::Search),
@@ -38,6 +38,11 @@ const NAV: [(Option<NavEntry>, &str, Destination); 6] = [
         Some(NavEntry::Local),
         "icons/file-music.svg",
         Destination::Local(LibraryTab::Songs),
+    ),
+    (
+        Some(NavEntry::Offline),
+        "icons/download.svg",
+        Destination::Offline,
     ),
     (
         Some(NavEntry::History),
@@ -127,6 +132,8 @@ impl SidebarLeft {
 
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        let offline = Offline::global(cx);
+        cx.observe(&offline, |_, _, cx| cx.notify()).detach();
         cx.observe(&trail, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&trail, |this, _, _: &NavigationEvent, cx| {
             this.dismiss(cx);
@@ -261,8 +268,14 @@ impl SidebarLeft {
         let stocked = self.session.read(cx).authenticated()
             || self.library.read(cx).stocked(Shelf::Streaming);
         let mut rows = Vec::new();
+        let offline = Offline::global(cx);
+        let show_offline = self.session.read(cx).provider_slug() == Some("subsonic")
+            || !offline.read(cx).is_empty();
         for (index, (entry, _, destination)) in NAV.iter().enumerate() {
             if entry.is_some_and(|entry| !self.settings.read(cx).nav_shown(entry.id())) {
+                continue;
+            }
+            if entry == &Some(NavEntry::Offline) && !show_offline {
                 continue;
             }
             let group = Group::of(destination);

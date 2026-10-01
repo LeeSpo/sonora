@@ -29,6 +29,7 @@ nav-albums = Albums
 nav-playlists = Playlists
 nav-artists = Artists
 nav-local = Local Music
+nav-offline = Downloaded
 nav-back = Back
 nav-forward = Forward
 nav-sidebar = Toggle sidebar
@@ -254,6 +255,8 @@ fullscreen-artwork = Artwork
 # filters
 filter-history = Filter listening history
 history-empty = Tracks you play will appear here.
+offline-empty = Tracks you save offline will appear here.
+filter-offline = Filter downloaded tracks
 history-not-loaded = Listening history could not be loaded.
 history-clear = Clear history
 history-clear-title = Clear listening history

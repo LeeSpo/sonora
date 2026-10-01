@@ -361,6 +361,7 @@ pub(crate) fn title<F>(
     explicit: bool,
     press: Option<Tap>,
     is_liked: Option<AnyElement>,
+    offline: Option<AnyElement>,
 ) -> AnyElement {
     let text = div()
         .id(("track-title", cell.row))
@@ -384,7 +385,26 @@ pub(crate) fn title<F>(
         .when(explicit, |this| {
             this.child(div().flex_none().child(ExplicitBadge::new()))
         })
+        .when_some(offline, |this, offline| this.child(offline))
         .when_some(is_liked, |this, is_liked| this.child(is_liked))
+        .into_any_element()
+}
+
+/// Download mark on a row that has a finished offline copy.
+pub(crate) fn offline_badge(row: usize, color: Hsla) -> AnyElement {
+    div()
+        .id(("offline-badge", row))
+        .flex_none()
+        .size_4()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            svg()
+                .path(icons::path("icons/download.svg"))
+                .size_3()
+                .text_color(color),
+        )
         .into_any_element()
 }
 

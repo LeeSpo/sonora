@@ -313,6 +313,15 @@ impl LibraryView {
         cx.observe(&Scan::global(cx), |_, _, cx| cx.notify())
             .detach();
 
+        let offline = state::Offline::global(cx);
+        cx.observe(&offline, |this, _, cx| {
+            for table in this.tables() {
+                table.refresh(cx);
+            }
+            cx.notify();
+        })
+        .detach();
+
         let current_playback = playback_status(&playback, cx);
         cx.observe(&playback, |this, playback, cx| {
             let current = playback_status(&playback, cx);

@@ -23,16 +23,18 @@ pub enum NavEntry {
     Library,
     History,
     Local,
+    Offline,
     Pins,
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Home,
         Self::Search,
         Self::Library,
         Self::History,
         Self::Local,
+        Self::Offline,
         Self::Pins,
     ];
 
@@ -43,6 +45,7 @@ impl NavEntry {
             Self::Library => "library",
             Self::History => "history",
             Self::Local => "local",
+            Self::Offline => "offline",
             Self::Pins => "sidebar-pins",
         }
     }
@@ -54,6 +57,7 @@ impl NavEntry {
             Self::Library => "nav-library",
             Self::History => "nav-history",
             Self::Local => "nav-local",
+            Self::Offline => "nav-offline",
             Self::Pins => "nav-pinned",
         }
     }
@@ -69,10 +73,11 @@ pub enum Screen {
     Playlists,
     Artists,
     Imported,
+    Offline,
 }
 
 impl Screen {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Home,
         Self::Search,
         Self::Songs,
@@ -81,6 +86,7 @@ impl Screen {
         Self::Playlists,
         Self::Imported,
         Self::History,
+        Self::Offline,
     ];
 
     pub fn id(self) -> &'static str {
@@ -93,6 +99,7 @@ impl Screen {
             Self::Playlists => "playlists",
             Self::Artists => "artists",
             Self::Imported => "imported",
+            Self::Offline => "offline",
         }
     }
 
@@ -106,6 +113,7 @@ impl Screen {
             Self::Playlists => "nav-playlists",
             Self::Artists => "nav-artists",
             Self::Imported => "nav-local",
+            Self::Offline => "nav-offline",
         }
     }
 
@@ -124,6 +132,7 @@ impl Screen {
             Self::Playlists => true,
             Self::Artists => true,
             Self::Imported => false,
+            Self::Offline => false,
         }
     }
 
@@ -137,6 +146,7 @@ impl Screen {
             Self::Playlists => Destination::Library(LibraryTab::Playlists),
             Self::Artists => Destination::Library(LibraryTab::Artists),
             Self::Imported => Destination::Local(LibraryTab::Songs),
+            Self::Offline => Destination::Offline,
         }
     }
 }
@@ -204,6 +214,7 @@ pub enum Destination {
     History,
     Library(LibraryTab),
     Local(LibraryTab),
+    Offline,
     Album(SharedString),
     Song(SharedString),
     Playlist(SharedString),

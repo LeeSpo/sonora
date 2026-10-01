@@ -33,6 +33,8 @@ pub struct Offline {
     io: Io,
     /// Tracks currently on disk, keyed by track id.
     ready: HashMap<String, OfflineEntry>,
+    /// Ready tracks in save order (newest first), for the Downloaded screen.
+    tracks: Vec<Track>,
     /// In-flight downloads.
     saving: HashSet<String>,
     tasks: HashMap<String, Task<()>>,
@@ -53,6 +55,7 @@ impl Offline {
         let mut this = Self {
             io,
             ready: HashMap::new(),
+            tracks: Vec::new(),
             saving: HashSet::new(),
             tasks: HashMap::new(),
             aborts: HashMap::new(),
@@ -77,36 +80,19 @@ impl Offline {
 
     fn reload_ready(&mut self) {
         self.ready.clear();
+        self.tracks.clear();
         for cached in music::offline::list() {
+            let track = track_from_cached(&cached);
             self.ready.insert(
                 cached.id.clone(),
                 OfflineEntry {
-                    track: Track {
-                        id: Some(cached.id.clone()),
-                        name: cached.name,
-                        playable: true,
-                        artists: cached.artists,
-                        artist_refs: Vec::new(),
-                        album: cached.album,
-                        album_id: None,
-                        cover: None,
-                        duration: std::time::Duration::from_millis(cached.duration_ms),
-                        added_at: None,
-                        added_by: None,
-                        playcount: None,
-                        popularity: 0,
-                        explicit: false,
-                        track_number: 0,
-                        disc_number: 0,
-                        tags: Vec::new(),
-                        languages: Vec::new(),
-                        credits: Vec::new(),
-                    },
+                    track: track.clone(),
                     status: OfflineStatus::Ready,
                     bytes: cached.bytes,
                     error: None,
                 },
             );
+            self.tracks.push(track);
         }
     }
 
@@ -127,6 +113,28 @@ impl Offline {
 
     pub fn entries(&self) -> impl Iterator<Item = &OfflineEntry> {
         self.ready.values()
+    }
+
+    /// Ready offline tracks, newest first — used by the Downloaded screen.
+    pub fn tracks(&self) -> &[Track] {
+        &self.tracks
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+    }
+
+    fn remember_ready(&mut self, track: Track) {
+        let Some(id) = track.id.clone() else {
+            return;
+        };
+        self.tracks.retain(|held| held.id.as_deref() != Some(id.as_str()));
+        self.tracks.insert(0, track);
+    }
+
+    fn forget_ready(&mut self, track_id: &str) {
+        self.tracks
+            .retain(|track| track.id.as_deref() != Some(track_id));
     }
 
     /// Save one or more Subsonic tracks for offline playback.
@@ -182,10 +190,14 @@ impl Offline {
                     this.aborts.remove(&task_id);
                     match result {
                         Ok(cached) => {
-                            if let Some(entry) = this.ready.get_mut(&task_id) {
+                            let ready_track = this.ready.get_mut(&task_id).map(|entry| {
                                 entry.status = OfflineStatus::Ready;
                                 entry.bytes = cached.bytes;
                                 entry.error = None;
+                                entry.track.clone()
+                            });
+                            if let Some(track) = ready_track {
+                                this.remember_ready(track);
                             }
                             succeeded.fetch_add(1, Ordering::SeqCst);
                         }
@@ -248,6 +260,7 @@ impl Offline {
                 Ok(()) => {
                     self.ready.remove(&id);
                     self.saving.remove(&id);
+                    self.forget_ready(&id);
                     succeeded += 1;
                 }
                 Err(error) => {
@@ -273,3 +286,28 @@ impl Offline {
         cx.notify();
     }
 }
+
+fn track_from_cached(cached: &music::offline::CachedTrack) -> Track {
+    Track {
+        id: Some(cached.id.clone()),
+        name: cached.name.clone(),
+        playable: true,
+        artists: cached.artists.clone(),
+        artist_refs: Vec::new(),
+        album: cached.album.clone(),
+        album_id: None,
+        cover: None,
+        duration: std::time::Duration::from_millis(cached.duration_ms),
+        added_at: None,
+        added_by: None,
+        playcount: None,
+        popularity: 0,
+        explicit: false,
+        track_number: 0,
+        disc_number: 0,
+        tags: Vec::new(),
+        languages: Vec::new(),
+        credits: Vec::new(),
+    }
+}
+

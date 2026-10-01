@@ -226,6 +226,12 @@ impl DetailView {
 
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
+        let offline = state::Offline::global(cx);
+        cx.observe(&offline, |this, _, cx| {
+            this.table.refresh(cx);
+            cx.notify();
+        })
+        .detach();
 
         let current_playback = playback_status(&playback, cx);
         cx.observe(&playback, |this, playback, cx| {

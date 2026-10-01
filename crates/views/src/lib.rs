@@ -9,6 +9,7 @@ use screens::artist::ArtistView;
 use screens::detail::DetailView;
 use screens::genre::GenreView;
 use screens::history::HistoryView;
+use screens::offline::OfflineView;
 use screens::home::HomeView;
 pub use screens::library::LibraryView;
 pub use screens::login::LoginView;

@@ -168,6 +168,12 @@ impl ArtistView {
         .detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
+        let offline = state::Offline::global(cx);
+        cx.observe(&offline, |this, _, cx| {
+            this.table.refresh(cx);
+            cx.notify();
+        })
+        .detach();
 
         let library = Sonora::global(cx).library.clone();
         cx.observe(&library, |this, _, cx| {
