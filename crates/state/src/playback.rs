@@ -622,7 +622,9 @@ impl Playback {
         if !track.playable {
             return self.failed(format!("{} is not available to stream", track.name), cx);
         }
-        if !is_local && Network::lost(cx) {
+        // Cached Subsonic / Navidrome audio plays from disk; only uncached remote
+        // tracks need the network.
+        if !is_local && Network::lost(cx) && !music::offline::is_cached(&id) {
             return self.unreachable(start, cx);
         }
         if self.engine_for(&id).is_none() {
