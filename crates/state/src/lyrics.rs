@@ -237,6 +237,32 @@ impl Lyrics {
         music::is_local_id(id) && self.settings.read(cx).lyrics_provider_enabled(LOCAL)
     }
 
+    /// The sheet saved with an offline copy of `id`, as a hit the panel can show.
+    fn kept_offline(&self, id: &str) -> Option<LyricsHit> {
+        if music::is_local_id(id) {
+            return None;
+        }
+        let kept = music::offline::lyrics(id)?;
+        // `source` must be 'static: reuse a known provider's name, else label it Subsonic.
+        let source = self
+            .providers
+            .iter()
+            .map(|provider| provider.name())
+            .find(|name| *name == kept.source)
+            .unwrap_or("Subsonic");
+        Some(LyricsHit {
+            source,
+            trust: 0,
+            lyrics: kept.lyrics,
+            instrumental: kept.instrumental,
+            title: kept.title,
+            artist: kept.artist,
+            album: None,
+            duration: None,
+            writers: Vec::new(),
+        })
+    }
+
     /// Ends a lookup's bookkeeping; true when it was for the track on screen.
     fn finished(&mut self, id: &str) -> bool {
         let current = self.following.as_deref() == Some(id);
@@ -268,6 +294,20 @@ impl Lyrics {
         self.hits.clear();
         self.state = LyricsState::Loading;
         cx.notify();
+
+        // No network: a saved track brings its own lyrics, so skip the doomed lookup.
+        if crate::Network::lost(cx)
+            && let Some(hit) = self.kept_offline(&id)
+        {
+            self.show(
+                Found {
+                    hits: vec![hit],
+                    instrumental: false,
+                },
+                cx,
+            );
+            return;
+        }
 
         if self.ahead_of.as_deref() == Some(id.as_str()) && self.ahead.is_some() {
             self.task = self.ahead.take();
@@ -405,14 +445,41 @@ impl Lyrics {
                 let current = this.finished(&id);
                 match found {
                     Ok(()) => {
-                        crate::Network::reached(cx);
                         let instrumental =
                             cached_instrumental || music::lyrics::instrumental(&ranking, &hits);
                         let ranked = ordered(&ranking, hits);
+                        // Nothing answered (typically offline): fall back to the saved sheet
+                        // without caching it under the providers' key.
+                        if ranked.is_empty()
+                            && !instrumental
+                            && let Some(hit) = this.kept_offline(&id)
+                        {
+                            if current {
+                                this.show(
+                                    Found {
+                                        hits: vec![hit],
+                                        instrumental: false,
+                                    },
+                                    cx,
+                                );
+                            }
+                            return;
+                        }
+                        crate::Network::reached(cx);
                         this.remember(id, ranked, displayed.as_ref(), instrumental, current, cx);
                     }
                     Err(error) => {
                         log::warn!("lyrics: cannot look up {}: {error:#}", track.name);
+                        if current && let Some(hit) = this.kept_offline(&id) {
+                            this.show(
+                                Found {
+                                    hits: vec![hit],
+                                    instrumental: false,
+                                },
+                                cx,
+                            );
+                            return;
+                        }
                         let reason = crate::blamed(&error, cx);
                         if current {
                             this.state = LyricsState::Failed(reason);
@@ -501,6 +568,27 @@ impl Lyrics {
     ) {
         let mut hits = ranked;
         keep_displayed_first(&mut hits, displayed);
+        // A track saved offline keeps the sheet that won here, so it shows without the network.
+        if !music::is_local_id(&id)
+            && music::offline::is_cached(&id)
+            && let Some(best) = hits.iter().find(|hit| hit.source != LOCAL)
+        {
+            let kept = music::offline::CachedLyrics {
+                source: best.source.to_owned(),
+                lyrics: best.lyrics.clone(),
+                instrumental: best.instrumental,
+                title: best.title.clone(),
+                artist: best.artist.clone(),
+            };
+            let track_id = id.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = music::offline::store_lyrics(&track_id, &kept) {
+                        log::debug!("lyrics: cannot keep the sheet offline: {error:#}");
+                    }
+                })
+                .detach();
+        }
         // A file's own lyrics are read again on every play. Services kept out of this lookup must
         // still be asked once allowed, and an answer already cached needs no second write.
         if self.online(&id, cx) && !self.cache.contains_key(&id) {

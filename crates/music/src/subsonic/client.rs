@@ -969,6 +969,20 @@ impl SubsonicClient {
     /// Opens the original audio download and answers once the response headers are in; the
     /// body is still on its way. Used to stream into the offline cache without holding the
     /// whole file in RAM.
+    /// Fetches a small server resource (such as a cover image) whose url this client built.
+    pub async fn fetch_bytes(&self, url: &str) -> Result<bytes::Bytes> {
+        self.http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("cannot fetch {url}"))?
+            .error_for_status()
+            .context("the server refused the request")?
+            .bytes()
+            .await
+            .context("the response body broke")
+    }
+
     pub async fn open_download(&self, track_id: &str) -> Result<reqwest::Response> {
         let url = format!("{}&id={}", self.downloads, escape::component(track_id));
         self.http

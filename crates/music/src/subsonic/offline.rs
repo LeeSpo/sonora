@@ -20,6 +20,10 @@ use crate::subsonic::client::SubsonicClient;
 
 const MANIFEST: &str = "manifest.json";
 const AUDIO_EXT: &str = "audio";
+/// Sidecar with the lyrics kept for a saved track (`{id}.lyrics.json`).
+const LYRICS_EXT: &str = "lyrics.json";
+/// Sidecar with the cover image kept for a saved track (`{id}.cover`).
+const COVER_EXT: &str = "cover";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedTrack {
@@ -32,6 +36,26 @@ pub struct CachedTrack {
     pub saved_at: i64,
     /// Relative file name under the cache root (`{id}.audio`).
     pub file: String,
+    /// Album id, so the Downloaded list can link to the album.
+    #[serde(default)]
+    pub album_id: Option<String>,
+    /// Remote cover url remembered at save time; used when the sidecar image is missing.
+    #[serde(default)]
+    pub cover_url: Option<String>,
+}
+
+/// Lyrics kept beside a saved track so they show without the network.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CachedLyrics {
+    /// Provider name the sheet came from (e.g. `Subsonic`, `LRCLIB`).
+    pub source: String,
+    pub lyrics: crate::Lyrics,
+    #[serde(default)]
+    pub instrumental: bool,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -68,16 +92,23 @@ fn manifest_path_for(account_key: &str) -> PathBuf {
     root_for(account_key).join(MANIFEST)
 }
 
-fn file_for_in(dir: &Path, id: &str) -> PathBuf {
+fn safe_name(id: &str) -> String {
     // Hash ids that contain path separators so a server id cannot escape the cache dir.
-    let safe = match id
+    match id
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
     {
         true => id.to_owned(),
         false => format!("{:x}", Sha256::digest(id.as_bytes())),
-    };
-    dir.join(format!("{safe}.{AUDIO_EXT}"))
+    }
+}
+
+fn file_for_in(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{}.{AUDIO_EXT}", safe_name(id)))
+}
+
+fn sidecar_in(dir: &Path, id: &str, ext: &str) -> PathBuf {
+    dir.join(format!("{}.{ext}", safe_name(id)))
 }
 
 fn file_for(id: &str) -> Option<PathBuf> {
@@ -232,6 +263,16 @@ fn validate(account_key: &str, manifest: &mut Manifest) -> bool {
             if name.ends_with(&format!(".{AUDIO_EXT}")) && !known.contains(name) {
                 log::info!("offline: removing orphan cache file {name}");
                 let _ = fs::remove_file(&path);
+                continue;
+            }
+            // Sidecars live and die with their audio file.
+            for ext in [LYRICS_EXT, COVER_EXT] {
+                if let Some(stem) = name.strip_suffix(&format!(".{ext}"))
+                    && !known.contains(&format!("{stem}.{AUDIO_EXT}"))
+                {
+                    log::info!("offline: removing orphan sidecar {name}");
+                    let _ = fs::remove_file(&path);
+                }
             }
         }
     }
@@ -276,7 +317,10 @@ fn client() -> Result<Option<SubsonicClient>> {
 
 /// Whether any finished offline copy is on disk for the signed-in server.
 pub fn any_ready() -> bool {
-    !list().is_empty()
+    let Ok(mut guard) = held().lock() else {
+        return false;
+    };
+    ensure(&mut guard).is_some() && !guard.manifest.tracks.is_empty()
 }
 
 /// Whether a finished offline copy of `track_id` is on disk for the signed-in server.
@@ -363,6 +407,30 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
         bail!("download cancelled");
     }
 
+    // Best effort: the audio is what matters, so a missing cover or lyric never fails the save.
+    if let Some(url) = track.cover.as_deref().filter(|url| url.starts_with("http")) {
+        match client.fetch_bytes(url).await {
+            Ok(bytes) if !bytes.is_empty() => {
+                if let Err(error) = fs::write(sidecar_in(&dir, id, COVER_EXT), &bytes) {
+                    log::debug!("offline: cannot keep the cover for {id}: {error}");
+                }
+            }
+            Ok(_) => {}
+            Err(error) => log::debug!("offline: cannot fetch the cover for {id}: {error:#}"),
+        }
+    }
+    if !sidecar_in(&dir, id, LYRICS_EXT).is_file() {
+        match server_lyrics(track).await {
+            Ok(Some(found)) => {
+                if let Err(error) = write_lyrics_in(&dir, id, &found) {
+                    log::debug!("offline: cannot keep lyrics for {id}: {error:#}");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => log::debug!("offline: cannot fetch lyrics for {id}: {error:#}"),
+        }
+    }
+
     let entry = CachedTrack {
         id: id.to_owned(),
         name: track.name.clone(),
@@ -376,6 +444,8 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
             .and_then(|name| name.to_str())
             .unwrap_or("track.audio")
             .to_owned(),
+        album_id: track.album_id.clone(),
+        cover_url: track.cover.clone().filter(|url| url.starts_with("http")),
     };
 
     let mut guard = held().lock().expect("offline cache lock");
@@ -435,17 +505,86 @@ pub fn remove(track_id: &str) -> Result<()> {
 }
 
 fn remove_files_for(track_id: &str, account_key: Option<&str>) {
-    if let Some(path) = file_for(track_id)
-        && path.exists()
-    {
-        let _ = fs::remove_file(&path);
+    let mut dirs = Vec::new();
+    if let Some(dir) = root() {
+        dirs.push(dir);
     }
     if let Some(key) = account_key {
-        let dest = file_for_in(&root_for(key), track_id);
-        if dest.exists() {
-            let _ = fs::remove_file(dest);
+        dirs.push(root_for(key));
+    }
+    for dir in dirs {
+        for path in [
+            file_for_in(&dir, track_id),
+            sidecar_in(&dir, track_id, LYRICS_EXT),
+            sidecar_in(&dir, track_id, COVER_EXT),
+        ] {
+            if path.exists() {
+                let _ = fs::remove_file(&path);
+            }
         }
     }
+}
+
+/// Cover image kept beside a saved track, as a `file://` url the artwork loader reads.
+pub fn cover(track_id: &str) -> Option<String> {
+    let path = sidecar_in(&root()?, track_id, COVER_EXT);
+    let meta = fs::metadata(&path).ok()?;
+    (meta.is_file() && meta.len() > 0).then(|| format!("file://{}", path.display()))
+}
+
+/// Lyrics kept beside a saved track, if any were found when it was saved or played.
+pub fn lyrics(track_id: &str) -> Option<CachedLyrics> {
+    let path = sidecar_in(&root()?, track_id, LYRICS_EXT);
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Replace the lyrics kept for a saved track (e.g. with the sheet that won online). Does
+/// nothing for a track that is not saved, so the cache never grows lyric-only rows.
+pub fn store_lyrics(track_id: &str, found: &CachedLyrics) -> Result<()> {
+    if !is_cached(track_id) {
+        return Ok(());
+    }
+    let dir = root().context("sign in to a Subsonic server to save lyrics offline")?;
+    write_lyrics_in(&dir, track_id, found)
+}
+
+fn write_lyrics_in(dir: &Path, track_id: &str, found: &CachedLyrics) -> Result<()> {
+    let path = sidecar_in(dir, track_id, LYRICS_EXT);
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(found).context("cannot serialize the lyrics")?;
+    fs::write(&tmp, bytes).context("cannot write the lyrics")?;
+    fs::rename(&tmp, &path).context("cannot replace the lyrics")?;
+    Ok(())
+}
+
+/// The server's own best sheet for `track` (`getLyricsBySongId`), ranked like playback does.
+async fn server_lyrics(track: &Track) -> Result<Option<CachedLyrics>> {
+    use crate::LyricsProvider as _;
+    let Some(id) = track.id.clone() else {
+        return Ok(None);
+    };
+    let query = crate::LyricsQuery {
+        title: track.name.clone(),
+        artist: track.artists.clone(),
+        album: (!track.album.is_empty()).then(|| track.album.clone()),
+        duration: track.duration,
+        track: Some(crate::TrackKey {
+            provider: "subsonic",
+            id,
+        }),
+    };
+    let hits = crate::subsonic::SubsonicLyrics::new()
+        .search(&query)
+        .await?;
+    let ranked = crate::lyrics::rank(&query, hits);
+    Ok(ranked.into_iter().next().map(|hit| CachedLyrics {
+        source: hit.source.to_owned(),
+        lyrics: hit.lyrics,
+        instrumental: hit.instrumental,
+        title: hit.title,
+        artist: hit.artist,
+    }))
 }
 
 fn now() -> i64 {
