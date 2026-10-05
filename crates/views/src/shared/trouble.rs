@@ -1,7 +1,8 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, ClickEvent, ElementId, SharedString, Window};
+use gpui::{AnyElement, App, ClickEvent, ElementId, SharedString, Window, div};
 use i18n::t;
 use music::SignInProblem;
+use router::{Destination, navigate};
 use state::{Failure, Network};
 use ui::{Button, Notice, Vacancy};
 
@@ -52,22 +53,43 @@ pub(crate) fn lost(
     reason: Option<&str>,
     retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Vacancy {
+    let offline = reason
+        .filter(|reason| !music::trouble::offline(reason))
+        .is_none();
     let vacancy = match reason.filter(|reason| !music::trouble::offline(reason)) {
         None => Vacancy::new(t!("trouble-offline"))
-            .detail(t!("trouble-offline-detail"))
+            .detail(match music::offline::any_ready() {
+                true => t!("trouble-offline-downloads"),
+                false => t!("trouble-offline-detail"),
+            })
             .icon("icons/wifi-off.svg"),
         Some(reason) => Vacancy::new(label)
             .detail(SharedString::from(reason.to_owned()))
             .icon("icons/circle-alert.svg"),
     };
 
-    vacancy.action(
-        Button::new(id)
-            .label(t!("trouble-retry"))
-            .icon("icons/refresh-cw.svg")
-            .outline()
-            .on_click(retry),
-    )
+    let retry = Button::new(id)
+        .label(t!("trouble-retry"))
+        .icon("icons/refresh-cw.svg")
+        .outline()
+        .on_click(retry);
+    // Offline with saved tracks: point at what still plays instead of leaving a dead end.
+    match offline && music::offline::any_ready() {
+        true => vacancy.action(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new("trouble-go-downloaded")
+                        .label(t!("trouble-go-downloaded"))
+                        .icon("icons/download.svg")
+                        .on_click(|_, _, cx| navigate(Destination::Offline, cx)),
+                )
+                .child(retry),
+        ),
+        false => vacancy.action(retry),
+    }
 }
 
 /// The failure's message alone, for the places that only have room for one line.
