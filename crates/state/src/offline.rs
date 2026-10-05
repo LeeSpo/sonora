@@ -167,6 +167,30 @@ impl Offline {
             .count()
     }
 
+    /// Forget failed saves without retrying; `None` dismisses every failed track.
+    pub fn dismiss_failed(&mut self, track_ids: Option<Vec<String>>, cx: &mut Context<Self>) {
+        let doomed: Vec<String> = self
+            .pending
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .filter(|id| {
+                self.is_failed(id)
+                    && track_ids
+                        .as_ref()
+                        .is_none_or(|wanted| wanted.iter().any(|held| held == id))
+            })
+            .collect();
+        if doomed.is_empty() {
+            return;
+        }
+        for id in &doomed {
+            self.ready.remove(id);
+            self.drop_pending(id);
+        }
+        self.relist();
+        cx.notify();
+    }
+
     /// Re-queue failed saves; `None` retries every failed track.
     pub fn retry(&mut self, track_ids: Option<Vec<String>>, cx: &mut Context<Self>) {
         let tracks: Vec<Track> = self
@@ -286,10 +310,15 @@ impl Offline {
                     this.aborts.remove(&task_id);
                     match result {
                         Ok(cached) => {
+                            let cover = music::offline::cover(&task_id);
                             let ready_track = this.ready.get_mut(&task_id).map(|entry| {
                                 entry.status = OfflineStatus::Ready;
                                 entry.bytes = cached.bytes;
                                 entry.error = None;
+                                // Prefer the kept image so the row keeps its art offline.
+                                if cover.is_some() {
+                                    entry.track.cover = cover.clone();
+                                }
                                 entry.track.clone()
                             });
                             this.drop_pending(&task_id);
@@ -404,8 +433,8 @@ fn track_from_cached(cached: &music::offline::CachedTrack) -> Track {
         artists: cached.artists.clone(),
         artist_refs: Vec::new(),
         album: cached.album.clone(),
-        album_id: None,
-        cover: None,
+        album_id: cached.album_id.clone(),
+        cover: music::offline::cover(&cached.id).or_else(|| cached.cover_url.clone()),
         duration: std::time::Duration::from_millis(cached.duration_ms),
         added_at: None,
         added_by: None,

@@ -475,73 +475,91 @@ impl ItemMenu {
         let streaming = !imported && !barren;
         // Offline audio is Subsonic / Navidrome only; hide the item on every other provider.
         let subsonic = Sonora::global(cx).session.read(cx).provider_slug() == Some("subsonic");
-        let offline_item = (streaming && subsonic).then(|| {
-            let offline = Sonora::global(cx).offline.clone();
-            let all_saved = ids.iter().all(|id| offline.read(cx).is_saved(id));
-            let any_saving = ids.iter().any(|id| offline.read(cx).is_saving(id));
-            if all_saved {
-                let held = ids.clone();
-                MenuItem::new(
-                    "remove-offline",
-                    counted("menu-remove-offline", "menu-remove-tracks-offline", count),
-                )
-                .icon("icons/trash-2.svg")
-                .on_click(move |_, _, cx| {
-                    Offline::global(cx).update(cx, |offline, cx| {
-                        offline.remove_tracks(held.clone(), cx);
-                    });
-                })
-            } else {
-                let held = tracks
+        let offline_items: Vec<MenuItem> = match streaming && subsonic {
+            false => Vec::new(),
+            true => {
+                let offline = Sonora::global(cx).offline.clone();
+                let offline = offline.read(cx);
+                let all_saved = ids.iter().all(|id| offline.is_saved(id));
+                let any_saving = ids.iter().any(|id| offline.is_saving(id));
+                let failed: Vec<String> = ids
+                    .iter()
+                    .filter(|id| offline.is_failed(id))
+                    .cloned()
+                    .collect();
+                // Only what is neither saved, saving, nor failed: failed tracks get Retry instead.
+                let unsaved: Vec<Track> = tracks
                     .iter()
                     .filter(|track| {
-                        track
-                            .id
-                            .as_deref()
-                            .is_some_and(|id| !music::is_local_id(id))
+                        track.id.as_deref().is_some_and(|id| {
+                            !music::is_local_id(id)
+                                && !offline.is_saved(id)
+                                && !offline.is_saving(id)
+                                && !offline.is_failed(id)
+                        })
                     })
                     .cloned()
-                    .collect::<Vec<_>>();
-                let item = MenuItem::new(
-                    "save-offline",
-                    counted("menu-save-offline", "menu-save-tracks-offline", count),
-                )
-                .icon("icons/download.svg");
-                if any_saving {
-                    MenuItem::new("saving-offline", t!("offline-status-saving"))
-                        .icon("icons/download.svg")
-                        .disabled()
-                } else if held.is_empty() {
-                    item.disabled()
-                } else {
-                    item.on_click(move |_, _, cx| {
-                        Offline::global(cx).update(cx, |offline, cx| {
-                            offline.save_tracks(held.clone(), cx);
-                        });
-                    })
-                }
-            }
-        });
-
-        let retry_offline = (streaming && subsonic)
-            .then(|| {
-                let offline = Sonora::global(cx).offline.clone();
-                let failed = ids
-                    .iter()
-                    .filter(|id| offline.read(cx).is_failed(id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                (!failed.is_empty()).then(|| {
-                    MenuItem::new("retry-offline", t!("menu-retry-offline"))
-                        .icon("icons/refresh-cw.svg")
+                    .collect();
+                let mut items = Vec::new();
+                if all_saved {
+                    let held = ids.clone();
+                    items.push(
+                        MenuItem::new(
+                            "remove-offline",
+                            counted("menu-remove-offline", "menu-remove-tracks-offline", count),
+                        )
+                        .icon("icons/trash-2.svg")
                         .on_click(move |_, _, cx| {
                             Offline::global(cx).update(cx, |offline, cx| {
-                                offline.retry(Some(failed.clone()), cx);
+                                offline.remove_tracks(held.clone(), cx);
                             });
-                        })
-                })
-            })
-            .flatten();
+                        }),
+                    );
+                } else if !unsaved.is_empty() {
+                    let queued = unsaved.len();
+                    items.push(
+                        MenuItem::new(
+                            "save-offline",
+                            counted("menu-save-offline", "menu-save-tracks-offline", queued),
+                        )
+                        .icon("icons/download.svg")
+                        .on_click(move |_, _, cx| {
+                            Offline::global(cx).update(cx, |offline, cx| {
+                                offline.save_tracks(unsaved.clone(), cx);
+                            });
+                        }),
+                    );
+                } else if any_saving && failed.is_empty() {
+                    items.push(
+                        MenuItem::new("saving-offline", t!("offline-status-saving"))
+                            .icon("icons/download.svg")
+                            .disabled(),
+                    );
+                }
+                if !failed.is_empty() {
+                    let retry = failed.clone();
+                    items.push(
+                        MenuItem::new("retry-offline", t!("menu-retry-offline"))
+                            .icon("icons/refresh-cw.svg")
+                            .on_click(move |_, _, cx| {
+                                Offline::global(cx).update(cx, |offline, cx| {
+                                    offline.retry(Some(retry.clone()), cx);
+                                });
+                            }),
+                    );
+                    items.push(
+                        MenuItem::new("dismiss-offline", t!("menu-dismiss-offline"))
+                            .icon("icons/x.svg")
+                            .on_click(move |_, _, cx| {
+                                Offline::global(cx).update(cx, |offline, cx| {
+                                    offline.dismiss_failed(Some(failed.clone()), cx);
+                                });
+                            }),
+                    );
+                }
+                items
+            }
+        };
 
         let delete_files = imported.then(|| {
             let ids = ids.clone();
@@ -580,8 +598,7 @@ impl ItemMenu {
                 details
                     .into_iter()
                     .chain(edit)
-                    .chain(offline_item)
-                    .chain(retry_offline)
+                    .chain(offline_items)
                     .chain(copy)
                     .chain(delete_files)
                     .collect(),

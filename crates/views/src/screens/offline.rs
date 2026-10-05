@@ -131,16 +131,30 @@ impl OfflineView {
             .meta(strip)
             .when(failed > 0, |hero| {
                 hero.actions(
-                    div().flex().items_center().child(
-                        Button::new("retry-offline-failed")
-                            .outline()
-                            .icon("icons/refresh-cw.svg")
-                            .label(t!("offline-retry-failed"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.offline
-                                    .update(cx, |offline, cx| offline.retry(None, cx));
-                            })),
-                    ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("retry-offline-failed")
+                                .outline()
+                                .icon("icons/refresh-cw.svg")
+                                .label(t!("offline-retry-failed"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.offline
+                                        .update(cx, |offline, cx| offline.retry(None, cx));
+                                })),
+                        )
+                        .child(
+                            Button::new("clear-offline-failed")
+                                .ghost()
+                                .icon("icons/x.svg")
+                                .label(t!("offline-clear-failed"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.offline
+                                        .update(cx, |offline, cx| offline.dismiss_failed(None, cx));
+                                })),
+                        ),
                 )
             })
             .into_any_element()

@@ -263,6 +263,12 @@ offline-progress = Saving { $settled } of { $total }
 offline-failed-count = { $count } failed
 offline-retry-failed = Retry failed
 menu-retry-offline = Retry offline save
+offline-clear-failed = Clear failed
+offline-collection-save = Save all offline
+offline-collection-saved = All tracks saved offline
+menu-dismiss-offline = Dismiss failed save
+trouble-offline-downloads = Check your internet connection. Your downloaded tracks still play.
+trouble-go-downloaded = Go to Downloaded
 history-not-loaded = Listening history could not be loaded.
 history-clear = Clear history
 history-clear-title = Clear listening history
@@ -814,8 +820,14 @@ toast-playlist-created = Playlist created
 toast-playlist-renamed = Playlist renamed
 toast-playlist-deleted = Playlist deleted
 toast-local-delete-failed = Some track files could not be deleted
-toast-offline-save-summary = { $succeeded } saved / { $failed } failed
-toast-offline-remove-summary = { $succeeded } removed / { $failed } failed
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } saved offline
+   *[other] { $succeeded } saved / { $failed } failed
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } removed
+   *[other] { $succeeded } removed / { $failed } failed
+}
 toast-playlist-added = Playlist added to your library
 toast-playlist-removed = Playlist removed from your library
 toast-playlist-visibility = Playlist visibility changed

@@ -229,6 +229,24 @@ offline-progress = 正在保存 { $settled } / { $total }
 offline-failed-count = { $count } 首失败
 offline-retry-failed = 重试失败项
 menu-retry-offline = 重试离线保存
+menu-save-offline = 保存到离线
+menu-save-tracks-offline = 将 { $count } 首歌曲保存到离线
+menu-remove-offline = 移除离线副本
+menu-remove-tracks-offline = 移除 { $count } 个离线副本
+offline-clear-failed = 清除失败项
+offline-collection-save = 全部保存到离线
+offline-collection-saved = 已全部保存到离线
+menu-dismiss-offline = 忽略失败的保存
+trouble-offline-downloads = 请检查网络连接。已下载的歌曲仍可播放。
+trouble-go-downloaded = 前往已下载
+toast-offline-save-summary = { $failed ->
+    [0] 已离线保存 { $succeeded } 首
+   *[other] 已保存 { $succeeded } 首 / 失败 { $failed } 首
+}
+toast-offline-remove-summary = { $failed ->
+    [0] 已移除 { $succeeded } 首
+   *[other] 已移除 { $succeeded } 首 / 失败 { $failed } 首
+}
 history-not-loaded = 收听历史加载失败。
 history-clear = 清空历史记录
 history-clear-title = 清空收听历史
