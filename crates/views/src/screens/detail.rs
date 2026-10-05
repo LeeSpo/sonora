@@ -436,6 +436,7 @@ impl DetailView {
                 self.playback.clone(),
             ))
             .children(self.library_button(cx))
+            .children(self.offline_button(cx))
             .children(overflow);
 
         let cover = header.and_then(|header| header.cover.clone());
@@ -463,6 +464,65 @@ impl DetailView {
                 .ok();
             })
             .into_any_element()
+    }
+
+    /// One click saves every streamed track on the page offline (Subsonic / Navidrome only).
+    /// Tracks already saved or saving are skipped, so pressing it again only picks up the rest.
+    fn offline_button(&self, cx: &App) -> Option<Button> {
+        if Sonora::global(cx).session.read(cx).provider_slug() != Some("subsonic") {
+            return None;
+        }
+        let theme = *cx.theme();
+        let offline = state::Offline::global(cx);
+        let tracks: Vec<music::Track> = self
+            .detail
+            .read(cx)
+            .tracks()
+            .iter()
+            .filter(|track| {
+                track
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !music::is_local_id(id))
+            })
+            .cloned()
+            .collect();
+        if tracks.is_empty() {
+            return None;
+        }
+        let (all_saved, any_saving, unsaved) = {
+            let offline = offline.read(cx);
+            let id = |track: &music::Track| track.id.clone().unwrap_or_default();
+            let all_saved = tracks.iter().all(|track| offline.is_saved(&id(track)));
+            let any_saving = tracks.iter().any(|track| offline.is_saving(&id(track)));
+            let unsaved: Vec<music::Track> = tracks
+                .iter()
+                .filter(|track| {
+                    let id = id(track);
+                    !offline.is_saved(&id) && !offline.is_saving(&id)
+                })
+                .cloned()
+                .collect();
+            (all_saved, any_saving, unsaved)
+        };
+        let button = Button::new("detail-save-offline")
+            .outline()
+            .icon("icons/download.svg");
+        Some(if all_saved {
+            button
+                .tint(theme.primary)
+                .tooltip("offline-collection-saved")
+        } else if unsaved.is_empty() && any_saving {
+            button.tooltip("offline-status-saving").disabled(true)
+        } else {
+            button
+                .tooltip("offline-collection-save")
+                .on_click(move |_, _, cx| {
+                    let unsaved = unsaved.clone();
+                    state::Offline::global(cx)
+                        .update(cx, |offline, cx| offline.save_tracks(unsaved, cx));
+                })
+        })
     }
 
     fn library_button(&self, cx: &App) -> Option<Button> {
