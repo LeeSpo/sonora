@@ -6,8 +6,8 @@ use i18n::t;
 use music::Track;
 use state::{Offline, Playback};
 use ui::{
-    ActiveTheme as _, Listing as _, Scrollbar, Scroller, TableDelegate, TableEvent, TableState, runtime, table,
-    vacant,
+    ActiveTheme as _, Button, Listing as _, Scrollbar, Scroller, TableDelegate, TableEvent,
+    TableState, runtime, table, vacant,
 };
 
 use crate::chrome::{Searchable, Toolbar, Tooled};
@@ -20,7 +20,7 @@ struct OfflineTracks(Entity<Offline>);
 
 impl Tracks for OfflineTracks {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
-        self.0.read(cx).tracks()
+        self.0.read(cx).listed()
     }
 
     fn is_loading(&self, _cx: &App) -> bool {
@@ -109,9 +109,19 @@ impl OfflineView {
             let duration: std::time::Duration = tracks.iter().map(|track| track.duration).sum();
             (tracks.len(), duration)
         };
+        let (progress, failed) = {
+            let offline = self.offline.read(cx);
+            (offline.progress(), offline.failed_count())
+        };
         let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
+        }
+        if let Some((settled, total)) = progress {
+            strip = strip.text(t!("offline-progress", settled = settled, total = total));
+        }
+        if failed > 0 {
+            strip = strip.text(t!("offline-failed-count", count = failed));
         }
 
         PageHero::new("offline-hero", t!("nav-offline"))
@@ -119,6 +129,20 @@ impl OfflineView {
             .accent()
             .eyebrow(t!("detail-playlist"))
             .meta(strip)
+            .when(failed > 0, |hero| {
+                hero.actions(
+                    div().flex().items_center().child(
+                        Button::new("retry-offline-failed")
+                            .outline()
+                            .icon("icons/refresh-cw.svg")
+                            .label(t!("offline-retry-failed"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.offline
+                                    .update(cx, |offline, cx| offline.retry(None, cx));
+                            })),
+                    ),
+                )
+            })
             .into_any_element()
     }
 }

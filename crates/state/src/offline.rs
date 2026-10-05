@@ -35,8 +35,14 @@ pub struct Offline {
     ready: HashMap<String, OfflineEntry>,
     /// Ready tracks in save order (newest first), for the Downloaded screen.
     tracks: Vec<Track>,
+    /// Saving and failed tracks in queue order, shown above `tracks` on the Downloaded screen.
+    pending: Vec<Track>,
+    /// `pending` followed by `tracks`: what the Downloaded screen lists.
+    listed: Vec<Track>,
     /// In-flight downloads.
     saving: HashSet<String>,
+    /// Saves queued since the queue was last empty; with `saving` this gives "x of y" progress.
+    queued: usize,
     tasks: HashMap<String, Task<()>>,
     /// Aborts the nested tokio download when the listener removes a saving track.
     aborts: HashMap<String, AbortHandle>,
@@ -56,7 +62,10 @@ impl Offline {
             io,
             ready: HashMap::new(),
             tracks: Vec::new(),
+            pending: Vec::new(),
+            listed: Vec::new(),
             saving: HashSet::new(),
+            queued: 0,
             tasks: HashMap::new(),
             aborts: HashMap::new(),
         };
@@ -74,6 +83,8 @@ impl Offline {
         }
         self.tasks.clear();
         self.saving.clear();
+        self.queued = 0;
+        self.pending.clear();
         self.reload_ready();
         cx.notify();
     }
@@ -94,6 +105,13 @@ impl Offline {
             );
             self.tracks.push(track);
         }
+        self.relist();
+    }
+
+    fn relist(&mut self) {
+        self.listed.clear();
+        self.listed.extend(self.pending.iter().cloned());
+        self.listed.extend(self.tracks.iter().cloned());
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
@@ -111,24 +129,98 @@ impl Offline {
         self.saving.contains(track_id)
     }
 
+    pub fn is_failed(&self, track_id: &str) -> bool {
+        !self.saving.contains(track_id)
+            && self
+                .ready
+                .get(track_id)
+                .is_some_and(|entry| entry.status == OfflineStatus::Failed)
+    }
+
+    /// What a song row should show: saved, saving, failed, or nothing.
+    pub fn status(&self, track_id: &str) -> Option<OfflineStatus> {
+        if self.saving.contains(track_id) {
+            Some(OfflineStatus::Saving)
+        } else if self.is_failed(track_id) {
+            Some(OfflineStatus::Failed)
+        } else if self.is_saved(track_id) {
+            Some(OfflineStatus::Ready)
+        } else {
+            None
+        }
+    }
+
+    /// `(settled, queued)` for the saves running now, or `None` when nothing is saving.
+    pub fn progress(&self) -> Option<(usize, usize)> {
+        let active = self.saving.len();
+        (active > 0).then(|| {
+            let total = self.queued.max(active);
+            (total - active, total)
+        })
+    }
+
+    pub fn failed_count(&self) -> usize {
+        self.pending
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .filter(|id| self.is_failed(id))
+            .count()
+    }
+
+    /// Re-queue failed saves; `None` retries every failed track.
+    pub fn retry(&mut self, track_ids: Option<Vec<String>>, cx: &mut Context<Self>) {
+        let tracks: Vec<Track> = self
+            .pending
+            .iter()
+            .filter(|track| {
+                track.id.as_deref().is_some_and(|id| {
+                    self.is_failed(id)
+                        && track_ids
+                            .as_ref()
+                            .is_none_or(|wanted| wanted.iter().any(|held| held == id))
+                })
+            })
+            .cloned()
+            .collect();
+        self.save_tracks(tracks, cx);
+    }
+
     pub fn entries(&self) -> impl Iterator<Item = &OfflineEntry> {
         self.ready.values()
     }
 
-    /// Ready offline tracks, newest first — used by the Downloaded screen.
+    /// Ready offline tracks, newest first.
     pub fn tracks(&self) -> &[Track] {
         &self.tracks
     }
 
+    /// Saving and failed tracks first, then ready ones — used by the Downloaded screen.
+    pub fn listed(&self) -> &[Track] {
+        &self.listed
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.tracks.is_empty()
+        self.listed.is_empty()
+    }
+
+    fn hold_pending(&mut self, track: &Track) {
+        let id = track.id.as_deref();
+        if !self.pending.iter().any(|held| held.id.as_deref() == id) {
+            self.pending.push(track.clone());
+        }
+    }
+
+    fn drop_pending(&mut self, track_id: &str) {
+        self.pending
+            .retain(|track| track.id.as_deref() != Some(track_id));
     }
 
     fn remember_ready(&mut self, track: Track) {
         let Some(id) = track.id.clone() else {
             return;
         };
-        self.tracks.retain(|held| held.id.as_deref() != Some(id.as_str()));
+        self.tracks
+            .retain(|held| held.id.as_deref() != Some(id.as_str()));
         self.tracks.insert(0, track);
     }
 
@@ -146,15 +238,18 @@ impl Offline {
         let batch: Vec<Track> = tracks
             .into_iter()
             .filter(|track| {
-                track
-                    .id
-                    .as_deref()
-                    .is_some_and(|id| !music::is_local_id(id) && !self.is_saved(id) && !self.saving.contains(id))
+                track.id.as_deref().is_some_and(|id| {
+                    !music::is_local_id(id) && !self.is_saved(id) && !self.saving.contains(id)
+                })
             })
             .collect();
         if batch.is_empty() {
             return;
         }
+        if self.saving.is_empty() {
+            self.queued = 0;
+        }
+        self.queued += batch.len();
 
         let remaining = Arc::new(AtomicUsize::new(batch.len()));
         let succeeded = Arc::new(AtomicUsize::new(0));
@@ -165,6 +260,7 @@ impl Offline {
                 continue;
             };
             self.saving.insert(id.clone());
+            self.hold_pending(&track);
             self.ready.insert(
                 id.clone(),
                 OfflineEntry {
@@ -196,6 +292,7 @@ impl Offline {
                                 entry.error = None;
                                 entry.track.clone()
                             });
+                            this.drop_pending(&task_id);
                             if let Some(track) = ready_track {
                                 this.remember_ready(track);
                             }
@@ -206,6 +303,7 @@ impl Offline {
                                 || format!("{error:#}").contains("canceled");
                             if cancelled {
                                 this.ready.remove(&task_id);
+                                this.drop_pending(&task_id);
                             } else {
                                 log::warn!("offline: cannot save {task_id}: {error:#}");
                                 if let Some(entry) = this.ready.get_mut(&task_id) {
@@ -213,6 +311,7 @@ impl Offline {
                                     entry.error = Some(format!("{error:#}"));
                                 } else {
                                     this.ready.remove(&task_id);
+                                    this.drop_pending(&task_id);
                                 }
                                 failed.fetch_add(1, Ordering::SeqCst);
                             }
@@ -237,13 +336,18 @@ impl Offline {
                             );
                         }
                     }
+                    if this.saving.is_empty() {
+                        this.queued = 0;
+                    }
+                    this.relist();
                     cx.notify();
                 })
                 .ok();
             });
             self.tasks.insert(id, task);
-            cx.notify();
         }
+        self.relist();
+        cx.notify();
     }
 
     pub fn remove_tracks(&mut self, track_ids: Vec<String>, cx: &mut Context<Self>) {
@@ -260,6 +364,7 @@ impl Offline {
                 Ok(()) => {
                     self.ready.remove(&id);
                     self.saving.remove(&id);
+                    self.drop_pending(&id);
                     self.forget_ready(&id);
                     succeeded += 1;
                 }
@@ -283,6 +388,10 @@ impl Offline {
                 cx,
             );
         }
+        if self.saving.is_empty() {
+            self.queued = 0;
+        }
+        self.relist();
         cx.notify();
     }
 }
@@ -310,4 +419,3 @@ fn track_from_cached(cached: &music::offline::CachedTrack) -> Track {
         credits: Vec::new(),
     }
 }
-

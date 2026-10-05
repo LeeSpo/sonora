@@ -16,7 +16,7 @@ use gpui::{
 };
 use music::{Shape, Track};
 use router::Destination;
-use state::{Detail, History, Library, Offline, Origin, Playback, Shelf, Sonora};
+use state::{Detail, History, Library, Offline, OfflineStatus, Origin, Playback, Shelf, Sonora};
 use ui::{
     Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource, TableState,
 };
@@ -401,11 +401,25 @@ impl TrackSource {
         color: Option<Hsla>,
         cx: &App,
     ) -> AnyElement {
-        let offline = track
-            .id
-            .as_deref()
-            .filter(|id| Offline::global(cx).read(cx).is_saved(id))
-            .map(|_| cells::offline_badge(cell.row, cx.theme().muted_foreground));
+        let offline = track.id.as_deref().and_then(|id| {
+            let status = Offline::global(cx).read(cx).status(id)?;
+            Some(match status {
+                OfflineStatus::Ready => cells::offline_badge(cell.row, cx.theme().muted_foreground),
+                OfflineStatus::Saving => cells::offline_saving_badge(cell.row, cx.theme().primary),
+                OfflineStatus::Failed => {
+                    let id = id.to_owned();
+                    cells::offline_failed_badge(
+                        cell.row,
+                        cx.theme().danger,
+                        Box::new(move |cx| {
+                            Offline::global(cx).update(cx, |offline, cx| {
+                                offline.retry(Some(vec![id.clone()]), cx);
+                            });
+                        }),
+                    )
+                }
+            })
+        });
         cells::title(
             cell,
             track.name.clone(),

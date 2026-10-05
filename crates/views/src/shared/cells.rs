@@ -4,16 +4,16 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, Hsla, MouseButton, Pixels, SharedString, Stateful, Task,
-    Window, div, px, svg,
+    Animation, AnimationExt as _, AnyElement, App, Context, Div, Entity, Hsla, MouseButton, Pixels,
+    SharedString, Stateful, Task, Window, div, ease_in_out, px, svg,
 };
 use i18n::t;
 use music::{ArtistRef, Contributor};
 use router::{Destination, Link as _, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme, clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, Perch,
+    ROW_GROUP, Theme, Tipped as _, clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -392,13 +392,7 @@ pub(crate) fn title<F>(
 
 /// Download mark on a row that has a finished offline copy.
 pub(crate) fn offline_badge(row: usize, color: Hsla) -> AnyElement {
-    div()
-        .id(("offline-badge", row))
-        .flex_none()
-        .size_4()
-        .flex()
-        .items_center()
-        .justify_center()
+    badge_frame(("offline-badge", row))
         .child(
             svg()
                 .path(icons::path("icons/download.svg"))
@@ -406,6 +400,57 @@ pub(crate) fn offline_badge(row: usize, color: Hsla) -> AnyElement {
                 .text_color(color),
         )
         .into_any_element()
+}
+
+/// Pulsing download mark on a row whose offline copy is still being saved.
+pub(crate) fn offline_saving_badge(row: usize, color: Hsla) -> AnyElement {
+    badge_frame(("offline-saving-badge", row))
+        .tip("offline-status-saving", Perch::Above)
+        .child(
+            svg()
+                .path(icons::path("icons/download.svg"))
+                .size_3()
+                .text_color(color)
+                .with_animation(
+                    ("offline-saving-pulse", row),
+                    Animation::new(Duration::from_millis(1200))
+                        .repeat()
+                        .with_easing(ease_in_out),
+                    |this, delta| {
+                        let fade = (delta * std::f32::consts::TAU).cos().abs();
+                        this.opacity(0.35 + fade * 0.65)
+                    },
+                ),
+        )
+        .into_any_element()
+}
+
+/// Alert mark on a row whose offline save failed; clicking it retries the save.
+pub(crate) fn offline_failed_badge(row: usize, color: Hsla, retry: Tap) -> AnyElement {
+    badge_frame(("offline-failed-badge", row))
+        .cursor_pointer()
+        .tip("offline-status-failed", Perch::Above)
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            retry(cx);
+        })
+        .child(
+            svg()
+                .path(icons::path("icons/circle-alert.svg"))
+                .size_3()
+                .text_color(color),
+        )
+        .into_any_element()
+}
+
+fn badge_frame(id: impl Into<gpui::ElementId>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .size_4()
+        .flex()
+        .items_center()
+        .justify_center()
 }
 
 pub(crate) fn artwork<F>(cell: &Cell<F>, url: Option<String>) -> AnyElement {

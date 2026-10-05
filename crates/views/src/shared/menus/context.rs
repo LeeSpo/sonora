@@ -507,7 +507,11 @@ impl ItemMenu {
                     counted("menu-save-offline", "menu-save-tracks-offline", count),
                 )
                 .icon("icons/download.svg");
-                if any_saving || held.is_empty() {
+                if any_saving {
+                    MenuItem::new("saving-offline", t!("offline-status-saving"))
+                        .icon("icons/download.svg")
+                        .disabled()
+                } else if held.is_empty() {
                     item.disabled()
                 } else {
                     item.on_click(move |_, _, cx| {
@@ -518,6 +522,26 @@ impl ItemMenu {
                 }
             }
         });
+
+        let retry_offline = (streaming && subsonic)
+            .then(|| {
+                let offline = Sonora::global(cx).offline.clone();
+                let failed = ids
+                    .iter()
+                    .filter(|id| offline.read(cx).is_failed(id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (!failed.is_empty()).then(|| {
+                    MenuItem::new("retry-offline", t!("menu-retry-offline"))
+                        .icon("icons/refresh-cw.svg")
+                        .on_click(move |_, _, cx| {
+                            Offline::global(cx).update(cx, |offline, cx| {
+                                offline.retry(Some(failed.clone()), cx);
+                            });
+                        })
+                })
+            })
+            .flatten();
 
         let delete_files = imported.then(|| {
             let ids = ids.clone();
@@ -557,6 +581,7 @@ impl ItemMenu {
                     .into_iter()
                     .chain(edit)
                     .chain(offline_item)
+                    .chain(retry_offline)
                     .chain(copy)
                     .chain(delete_files)
                     .collect(),

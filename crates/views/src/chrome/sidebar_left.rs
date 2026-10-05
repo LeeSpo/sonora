@@ -15,7 +15,9 @@ use gpui::{Window, div, px};
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsTab, navigate,
 };
-use state::{AppSettings, Library, Offline, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora};
+use state::{
+    AppSettings, Library, Offline, Origin, PinSort, Pins, Playback, Session, Shelf, Sonora,
+};
 
 use crate::shared::menus::{ItemMenu, item_menu};
 
@@ -561,7 +563,16 @@ impl SidebarLeft {
             true => theme.foreground,
             false => theme.muted_foreground,
         };
-        let row = nav_row(index, key, tint, accent).icon(icon);
+        let mut row = nav_row(index, key, tint, accent).icon(icon);
+        if entry == Some(NavEntry::Offline) {
+            // Batch saves are visible from anywhere: "Downloaded 3/10", and an alert on failures.
+            let offline = Offline::global(cx).read(cx);
+            if let Some((settled, total)) = offline.progress() {
+                row = row.label(format!("{}  {settled}/{total}", i18n::lookup(key, None)));
+            } else if offline.failed_count() > 0 {
+                row = row.trailing("icons/circle-alert.svg");
+            }
+        }
 
         match group {
             Some(group) => row
