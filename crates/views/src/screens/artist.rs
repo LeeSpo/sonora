@@ -16,7 +16,7 @@ use ui::ActiveTheme as _;
 use ui::Listing as _;
 use ui::{
     Button, Card, Deck, MIN_CONTENT, Mode, Picker, Pin, PinKind, Popovers, Popup, Scrollbar,
-    Scroller, Skeleton, TableDelegate, TableEvent, TableState, Text, scrolled, snapped, table,
+    Scroller, TableDelegate, TableEvent, TableState, Text, scrolled, snapped, table,
 };
 
 use crate::chrome::tools;
@@ -36,7 +36,7 @@ use crate::shared::trouble;
 const SECTION: &str = "artist";
 const RELEASE_ROWS: usize = 2;
 const LISTED: usize = 5;
-const LISTED_MAX: usize = 10;
+const LISTED_MAX: usize = 20;
 
 struct ArtistTracks {
     detail: Entity<ArtistDetail>,
@@ -735,38 +735,6 @@ impl ArtistView {
         )]
     }
 
-    fn tracks_loading(&self, cx: &Context<Self>) -> AnyElement {
-        let theme = *cx.theme();
-        let line = || Skeleton::new().w_full().h(theme.metrics.pad);
-
-        div()
-            .w_full()
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(theme.border)
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h(theme.metrics.header)
-                    .px(theme.metrics.pad)
-                    .bg(theme.table_head)
-                    .child(line()),
-            )
-            .children((0..5).map(|_| {
-                div()
-                    .flex()
-                    .items_center()
-                    .h(theme.metrics.row)
-                    .px(theme.metrics.pad)
-                    .border_t_1()
-                    .border_color(theme.table_row_border)
-                    .child(line())
-            }))
-            .into_any_element()
-    }
-
     fn listed(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = *cx.theme();
         let expanded = self.shown.get() > LISTED;
@@ -793,19 +761,13 @@ impl ArtistView {
             .flex()
             .flex_col()
             .gap_2()
-            .child({
-                let detail = self.detail.read(cx);
-                let loading = detail.is_loading()
-                    || (self.popular.is_empty() && detail.is_filling());
-                match loading {
-                    true => self.tracks_loading(cx),
-                    false => table(&self.table)
-                        .rounded(theme.radius)
-                        .border_1()
-                        .border_color(theme.border)
-                        .into_any_element(),
-                }
-            })
+            .child(
+                table(&self.table)
+                    .rounded(theme.radius)
+                    .border_1()
+                    .border_color(theme.border)
+                    .into_any_element(),
+            )
             .children(more)
             .into_any_element()
     }
@@ -825,10 +787,6 @@ impl ArtistView {
         let playback = self.playback.clone();
         let opened = cx.entity().downgrade();
 
-        let loading = {
-            let detail = self.detail.read(cx);
-            detail.is_loading() || (tracks.is_empty() && detail.is_filling())
-        };
         Picks::new(
             "artist-popular",
             tracks,
@@ -840,7 +798,7 @@ impl ArtistView {
         .eyebrow(i18n::lookup("artist-popular-eyebrow", None))
         .vacancy("artist-popular-empty")
         .detailed()
-        .loading(loading)
+        .loading(false)
         .on_previous(cx.listener(|this, _, _, cx| {
             this.popular_page = this.popular_page.saturating_sub(1);
             this.track_context = None;
@@ -1008,13 +966,9 @@ impl Render for ArtistView {
         let listed = self.mode == Mode::List;
         let release_padding = self.release_padding;
         let head = self.header(cx);
-        // Popular stays off the page when the artist has nothing played and the fill is done,
-        // so an empty heading or vacancy block never sits under the hero.
-        let popular_loading = {
-            let detail = self.detail.read(cx);
-            detail.is_loading() || (self.popular.is_empty() && detail.is_filling())
-        };
-        let show_popular = !self.popular.is_empty() || popular_loading;
+        // Popular stays off the page until the catalogue fill has produced played tracks,
+        // so a no-plays artist never flashes a skeleton under the hero.
+        let show_popular = !self.popular.is_empty();
         let tracks = match show_popular {
             true => Some(match self.mode {
                 Mode::Grid => self.popular(cx),
