@@ -50,7 +50,7 @@ struct ApiBackend(Arc<dyn MusicApi>);
 #[async_trait]
 impl CatalogBackend for ApiBackend {
     async fn artist(&self, id: &str) -> Result<Artist> {
-        self.0.artist(id).await
+        self.0.artist_overview(id).await
     }
     async fn artist_catalogue(&self, id: &str, known: &[Track]) -> Result<ArtistCatalogue> {
         self.0.artist_catalogue(id, known).await

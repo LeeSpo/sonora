@@ -15,17 +15,20 @@ use crate::escape;
 use crate::subsonic::auth::Signature;
 use crate::subsonic::wire;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, Genre, GenreDetail, GenreItem,
-    GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, Report, SUGGESTIONS,
-    SavedArtist, Track, UserProfile, distinct_covers,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, Genre, GenreDetail,
+    GenreItem, GenreSection, HomeFeed, MediaKind, MusicApi, Playlist, PlaylistDetail, Report,
+    SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers,
 };
 
 const PORTRAIT_LIMIT: usize = 24;
 const RADIO_COUNT: i32 = 25;
-/// How many similar artists lend their albums to a thin rail, and how many albums each
-/// lends.
-const SIMILAR_ARTISTS: usize = 6;
-const SIMILAR_RELEASES: usize = 2;
+/// How many songs a name search offers as the artist's own, and how many of the most played
+/// of them the artist page lists.
+const ARTIST_SONGS: i32 = 200;
+const TOP_TRACKS: usize = 20;
+/// How long the artist's top tracks may take. The search is answered from the server's own
+/// library, so this only bounds a server that has stopped answering.
+const LOCAL_WAIT: Duration = Duration::from_secs(3);
 const HOME_SONGS: i32 = 25;
 const HOME_ALBUMS: i32 = 12;
 const LIBRARY_PAGE: i32 = 500;
@@ -190,16 +193,58 @@ impl SubsonicClient {
         )
     }
 
-    fn artist_cover(
-        &self,
-        art: Option<&str>,
-        image: Option<&str>,
-        fallback: &str,
-    ) -> Option<String> {
-        if let Some(url) = image.filter(|url| !url.is_empty()) {
-            return Some(url.to_owned());
-        }
+    /// The artist's picture from the server's own cover art endpoint. `artistImageUrl` is
+    /// left alone on purpose: Navidrome fills it with a Last.fm or Spotify address, which
+    /// would have the app fetch every portrait from outside the server.
+    fn artist_cover(&self, art: Option<&str>, fallback: &str) -> Option<String> {
         self.cover_large(art, fallback)
+    }
+
+    /// The artist as `getArtist` answers it: name, picture and albums, all from the server's
+    /// own library. The biography and the top songs are left out, because Navidrome asks
+    /// Last.fm or Spotify for both.
+    async fn artist_detail(&self, artist_id: &str) -> Result<Artist> {
+        let detail = self
+            .client
+            .get_artist(artist_id)
+            .await
+            .context("cannot load the artist")?;
+        let cover_large = self.artist_cover(detail.cover_art.as_deref(), artist_id);
+        let albums = detail
+            .album
+            .into_iter()
+            .map(|album| self.convert_album(album))
+            .collect();
+        Ok(Artist {
+            name: detail.name,
+            cover_large,
+            biography: None,
+            monthly_listeners: None,
+            top_tracks: Vec::new(),
+            albums,
+        })
+    }
+
+    /// The artist's songs, from a name search the server answers out of its own library.
+    /// The search also finds other artists' songs that mention the name, so only songs
+    /// credited to the artist are kept.
+    async fn artist_songs(&self, artist_id: &str, name: &str) -> Result<Vec<Track>> {
+        let search = self.client.search3(
+            name,
+            Some(0),
+            None,
+            Some(0),
+            None,
+            Some(ARTIST_SONGS),
+            None,
+            None,
+        );
+        let found = tokio::time::timeout(LOCAL_WAIT, search)
+            .await
+            .with_context(|| format!("the songs of artist {artist_id} took too long"))?
+            .with_context(|| format!("cannot search the songs of artist {artist_id}"))?;
+        let songs = found.song.into_iter().map(|song| self.song(song)).collect();
+        Ok(credited(artist_id, name, songs))
     }
 
     /// Up to `SUGGESTIONS` of the artist's own albums without the album the page is already
@@ -217,67 +262,6 @@ impl SubsonicClient {
             .filter(|album| album.id != album_id)
             .take(SUGGESTIONS)
             .collect())
-    }
-
-    /// Up to `SUGGESTIONS` artists the server lists as similar, for the rail's artists tab.
-    async fn similar_artists(&self, artist_id: &str) -> Result<Vec<SavedArtist>> {
-        let info = self
-            .client
-            .get_artist_info2(artist_id, Some(SUGGESTIONS as i32), None)
-            .await
-            .with_context(|| format!("cannot load artists similar to {artist_id}"))?;
-        Ok(info
-            .similar_artist
-            .into_iter()
-            .filter(|artist| !artist.name.is_empty())
-            .map(|artist| SavedArtist {
-                cover: self.artist_cover(
-                    artist.cover_art.as_deref(),
-                    artist.artist_image_url.as_deref(),
-                    &artist.id,
-                ),
-                id: artist.id.clone(),
-                name: artist.name.clone(),
-                added_at: None,
-            })
-            .take(SUGGESTIONS)
-            .collect())
-    }
-
-    /// A few albums each from the first similar artists, skipping the page's own album:
-    /// the cross-artist half of the rail. One artist failing only shortens the rail.
-    async fn similar_releases(&self, album_id: &str, similar: &[SavedArtist]) -> Vec<Album> {
-        let mut tasks = JoinSet::new();
-        for artist in similar.iter().take(SIMILAR_ARTISTS) {
-            let client = self.clone();
-            let album_id = album_id.to_owned();
-            let artist_id = artist.id.clone();
-            tasks.spawn(async move {
-                let detail = match client.client.get_artist(&artist_id).await {
-                    Ok(detail) => detail,
-                    Err(error) => {
-                        log::warn!("subsonic: cannot load similar artist {artist_id}: {error:#}");
-                        return None;
-                    }
-                };
-                Some(
-                    detail
-                        .album
-                        .into_iter()
-                        .map(|album| client.convert_album(album))
-                        .filter(|album| album.id != album_id)
-                        .take(SIMILAR_RELEASES)
-                        .collect::<Vec<Album>>(),
-                )
-            });
-        }
-        let mut releases = Vec::new();
-        while let Some(read) = tasks.join_next().await {
-            if let Ok(Some(read)) = read {
-                releases.extend(read);
-            }
-        }
-        releases
     }
 }
 
@@ -300,66 +284,54 @@ impl MusicApi for SubsonicClient {
         }
     }
 
+    /// The artist with the songs to play for it: the most played ones, or the artist's
+    /// songs as the search finds them when none has been played yet.
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
-        let detail = self
-            .client
-            .get_artist(artist_id)
-            .await
-            .context("cannot load the artist")?;
-        let name = detail.name.clone();
-        let cover_large = self.artist_cover(
-            detail.cover_art.as_deref(),
-            detail.artist_image_url.as_deref(),
-            artist_id,
-        );
-
-        let biography = self
-            .client
-            .get_artist_info2(artist_id, None, None)
-            .await
-            .ok()
-            .and_then(|info| info.biography)
-            .filter(|bio| !bio.trim().is_empty());
-
-        let mut top_tracks = match self.client.get_top_songs(&name, Some(20)).await {
-            Ok(songs) => songs.into_iter().map(|song| self.song(song)).collect(),
-            Err(_) => Vec::new(),
+        let mut artist = self.artist_detail(artist_id).await?;
+        let songs = match self.artist_songs(artist_id, &artist.name).await {
+            Ok(songs) => songs,
+            Err(error) => {
+                log::warn!("subsonic: {error:#}");
+                Vec::new()
+            }
         };
-        if top_tracks.is_empty()
-            && let Ok(similar) = self
-                .client
-                .search3(&name, None, None, None, None, Some(10), None, None)
-                .await
-        {
-            top_tracks = similar
-                .song
-                .into_iter()
-                .map(|song| self.song(song))
-                .collect();
-        }
+        let top = most_played(songs.clone());
+        artist.top_tracks = match top.is_empty() {
+            true => songs.into_iter().take(TOP_TRACKS).collect(),
+            false => top,
+        };
+        Ok(artist)
+    }
 
-        let albums = detail
-            .album
-            .into_iter()
-            .map(|album| self.convert_album(album))
-            .collect();
+    /// Only `getArtist`, so the page goes up as soon as the server names the artist and its
+    /// albums. The top tracks follow in `artist_catalogue`.
+    async fn artist_overview(&self, artist_id: &str) -> Result<Artist> {
+        self.artist_detail(artist_id).await
+    }
 
-        Ok(Artist {
-            name,
-            cover_large,
-            biography,
-            monthly_listeners: None,
-            top_tracks,
-            albums,
+    /// The artist's most played songs, read after the overview is up. An artist nobody has
+    /// played yet has none, and the page leaves the section out rather than listing songs in
+    /// an arbitrary order. A failed search is an error, so the catalog asks again next time.
+    async fn artist_catalogue(&self, artist_id: &str, _known: &[Track]) -> Result<ArtistCatalogue> {
+        // Bounded like the search, so the page's popular skeleton always gives way: to the
+        // songs, or to nothing once this has failed.
+        let detail = tokio::time::timeout(LOCAL_WAIT, self.client.get_artist(artist_id))
+            .await
+            .with_context(|| format!("artist {artist_id} took too long"))?
+            .context("cannot load the artist")?;
+        let songs = self.artist_songs(artist_id, &detail.name).await?;
+        Ok(ArtistCatalogue {
+            top_tracks: most_played(songs),
+            ..Default::default()
         })
     }
 
     async fn artist_profile(&self, artist_id: &str) -> Result<ArtistProfile> {
-        let artist = self.artist(artist_id).await?;
+        let artist = self.artist_detail(artist_id).await?;
         Ok(ArtistProfile {
             name: artist.name,
             cover_large: artist.cover_large,
-            biography: artist.biography,
+            biography: None,
         })
     }
 
@@ -369,11 +341,7 @@ impl MusicApi for SubsonicClient {
             let client = self.clone();
             tasks.spawn(async move {
                 let detail = client.client.get_artist(&id).await.ok()?;
-                let cover = client.artist_cover(
-                    detail.cover_art.as_deref(),
-                    detail.artist_image_url.as_deref(),
-                    &id,
-                )?;
+                let cover = client.artist_cover(detail.cover_art.as_deref(), &id)?;
                 Some((id, cover))
             });
         }
@@ -622,11 +590,7 @@ impl MusicApi for SubsonicClient {
             .artist
             .iter()
             .map(|artist| {
-                let cover = self.artist_cover(
-                    artist.cover_art.as_deref(),
-                    artist.artist_image_url.as_deref(),
-                    &artist.id,
-                );
+                let cover = self.artist_cover(artist.cover_art.as_deref(), &artist.id);
                 wire::saved_artist(artist, cover)
             })
             .collect())
@@ -643,11 +607,7 @@ impl MusicApi for SubsonicClient {
             .into_iter()
             .flat_map(|index| index.artist)
             .map(|artist| {
-                let cover = self.artist_cover(
-                    artist.cover_art.as_deref(),
-                    artist.artist_image_url.as_deref(),
-                    &artist.id,
-                );
+                let cover = self.artist_cover(artist.cover_art.as_deref(), &artist.id);
                 wire::saved_artist(&artist, cover)
             })
             .collect())
@@ -692,41 +652,20 @@ impl MusicApi for SubsonicClient {
         let Some(artist_id) = artist_id else {
             return Ok(AlbumCatalogue::default());
         };
-        let (more_by, similar) = tokio::join!(
-            self.more_from_artist(album_id, artist_id),
-            self.similar_artists(artist_id),
-        );
-        // Nothing read at all is an error rather than an empty rail, so the catalog does not
-        // keep the empty answer for the rest of the session.
-        let (more_by, similar) = match (more_by, similar) {
-            (Err(error), Err(_)) => return Err(error.context("cannot read any recommendations")),
-            pair => pair,
-        };
-        if let Err(error) = &more_by {
-            log::warn!("subsonic: cannot read more from this artist: {error:#}");
-        }
-        if let Err(error) = &similar {
-            log::warn!("subsonic: cannot read similar artists: {error:#}");
-        }
-        let (more_by, similar) = (more_by.unwrap_or_default(), similar.unwrap_or_default());
+        // Only the artist's own albums: the similar artists `getArtistInfo2` lists come from
+        // Last.fm, and nothing on this path leaves the server. Nothing read is an error rather
+        // than an empty rail, so the catalog does not keep it for the rest of the session.
         let mut seen = HashSet::new();
-        let mut liked: Vec<Album> = more_by
+        let also_like = self
+            .more_from_artist(album_id, artist_id)
+            .await
+            .context("cannot read any recommendations")?
             .into_iter()
             .filter(|album| seen.insert(album.id.clone()))
             .collect();
-        if liked.len() < SUGGESTIONS && !similar.is_empty() {
-            for album in self.similar_releases(album_id, &similar).await {
-                if liked.len() >= SUGGESTIONS {
-                    break;
-                }
-                if seen.insert(album.id.clone()) {
-                    liked.push(album);
-                }
-            }
-        }
         Ok(AlbumCatalogue {
-            also_like: liked,
-            similar,
+            also_like,
+            similar: Vec::new(),
         })
     }
 
@@ -781,21 +720,13 @@ impl MusicApi for SubsonicClient {
         track_id: &str,
         _from: Option<&str>,
     ) -> Result<(Vec<Track>, Option<String>)> {
-        let similar = self
-            .client
-            .get_similar_songs2(track_id, Some(RADIO_COUNT))
-            .await;
-        if let Ok(songs) = similar {
-            let songs: Vec<Track> = songs.into_iter().map(|song| self.song(song)).collect();
-            if !songs.is_empty() {
-                return Ok((songs, None));
-            }
-        }
+        // Random songs from the library rather than `getSimilarSongs2`, which Navidrome
+        // answers by asking Last.fm for similar artists.
         let random = self
             .client
-            .get_random_songs(Some(20), None, None, None, None)
+            .get_random_songs(Some(RADIO_COUNT), None, None, None, None)
             .await
-            .context("cannot load a radio fallback")?;
+            .context("cannot load a radio")?;
         Ok((
             random
                 .into_iter()
@@ -1039,5 +970,113 @@ fn source_genre(source: SourceGenre) -> Genre {
         id: name.clone(),
         name,
         cover: None,
+    }
+}
+
+/// The songs credited to the artist, by id where the server gives one and by name where it
+/// does not. A name search also finds songs that only mention the name in a title or album.
+fn credited(artist_id: &str, name: &str, songs: Vec<Track>) -> Vec<Track> {
+    songs
+        .into_iter()
+        .filter(|track| {
+            track.artist_refs.iter().any(|artist| match &artist.id {
+                Some(id) if !id.is_empty() => id == artist_id,
+                _ => artist.name.eq_ignore_ascii_case(name),
+            })
+        })
+        .collect()
+}
+
+/// The `TOP_TRACKS` most played songs, most played first. Songs never played are left out,
+/// so an artist nobody has listened to has no top tracks rather than an arbitrary list.
+fn most_played(songs: Vec<Track>) -> Vec<Track> {
+    let mut played: Vec<Track> = songs
+        .into_iter()
+        .filter(|track| track.playcount.unwrap_or(0) > 0)
+        .collect();
+    // stable, so songs played as often keep the order the server gave them
+    played.sort_by(|a, b| b.playcount.cmp(&a.playcount));
+    played.truncate(TOP_TRACKS);
+    played
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ArtistRef;
+
+    fn song(id: &str, artist: (&str, Option<&str>), plays: Option<u64>) -> Track {
+        Track {
+            id: Some(id.to_owned()),
+            name: id.to_owned(),
+            playable: true,
+            artists: artist.0.to_owned(),
+            artist_refs: vec![ArtistRef {
+                name: artist.0.to_owned(),
+                id: artist.1.map(str::to_owned),
+            }],
+            album: String::new(),
+            album_id: None,
+            cover: None,
+            duration: Duration::ZERO,
+            added_at: None,
+            added_by: None,
+            playcount: plays,
+            popularity: 0,
+            explicit: false,
+            track_number: 0,
+            disc_number: 0,
+            tags: Vec::new(),
+            languages: Vec::new(),
+            credits: Vec::new(),
+        }
+    }
+
+    fn ids(tracks: &[Track]) -> Vec<&str> {
+        tracks
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect()
+    }
+
+    #[test]
+    fn keeps_only_songs_credited_to_the_artist() {
+        let songs = vec![
+            song("own", ("Muse", Some("ar-1")), None),
+            song("other", ("Muse Tribute", Some("ar-2")), None),
+            song("named", ("muse", None), None),
+            song("stranger", ("Someone", None), None),
+        ];
+        assert_eq!(ids(&credited("ar-1", "Muse", songs)), ["own", "named"]);
+    }
+
+    #[test]
+    fn ranks_played_songs_and_drops_the_unplayed() {
+        let songs = vec![
+            song("never", ("A", Some("a")), None),
+            song("once", ("A", Some("a")), Some(1)),
+            song("zero", ("A", Some("a")), Some(0)),
+            song("often", ("A", Some("a")), Some(9)),
+        ];
+        assert_eq!(ids(&most_played(songs)), ["often", "once"]);
+    }
+
+    #[test]
+    fn an_unplayed_artist_has_no_top_tracks() {
+        let songs = vec![
+            song("a", ("A", Some("a")), Some(0)),
+            song("b", ("A", Some("a")), None),
+        ];
+        assert!(most_played(songs).is_empty());
+    }
+
+    #[test]
+    fn caps_the_top_tracks() {
+        let songs = (0..TOP_TRACKS as u64 + 5)
+            .map(|plays| song(&plays.to_string(), ("A", Some("a")), Some(plays + 1)))
+            .collect();
+        let top = most_played(songs);
+        assert_eq!(top.len(), TOP_TRACKS);
+        assert_eq!(top[0].playcount, Some(TOP_TRACKS as u64 + 5));
     }
 }

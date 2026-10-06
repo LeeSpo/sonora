@@ -109,6 +109,14 @@ pub trait MusicApi: Send + Sync {
 
     async fn artist(&self, artist_id: &str) -> Result<Artist>;
 
+    /// What an artist page needs before it can go up. A provider whose top tracks take a
+    /// second request can answer with just the name, the picture and the albums here and
+    /// bring the rest in `artist_catalogue`; `artist` itself stays whole for the callers that
+    /// want the tracks, such as playing the artist. The default is `artist`.
+    async fn artist_overview(&self, artist_id: &str) -> Result<Artist> {
+        self.artist(artist_id).await
+    }
+
     /// The rest of an artist page, fetched once `artist` has put the overview up: the whole
     /// discography and the popular tracks that only the discography can rank. `known` is the
     /// top tracks already on the page, so the provider can rank around them. A provider whose
