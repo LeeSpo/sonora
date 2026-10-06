@@ -14,9 +14,9 @@ use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::Track;
 use crate::subsonic::auth;
 use crate::subsonic::client::SubsonicClient;
+use crate::{ArtistRef, MusicApi as _, Track};
 
 const MANIFEST: &str = "manifest.json";
 const AUDIO_EXT: &str = "audio";
@@ -24,6 +24,12 @@ const AUDIO_EXT: &str = "audio";
 const LYRICS_EXT: &str = "lyrics.json";
 /// Sidecar with the cover image kept for a saved track (`{id}.cover`).
 const COVER_EXT: &str = "cover";
+/// Prefix of the stand-in artist id a saved track carries when its row predates artist ids.
+/// The rest of the id is the artist's name, so the Downloaded screen can still group by it.
+pub const NAME_ARTIST_PREFIX: &str = "offline-artist:";
+/// How one display line of artists separates the names in it: our own join in `wire`, the
+/// bullet Navidrome uses, and the two other separators tag editors commonly write.
+const ARTIST_SEPARATORS: [&str; 4] = [", ", " \u{2022} ", "; ", " / "];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedTrack {
@@ -42,6 +48,23 @@ pub struct CachedTrack {
     /// Remote cover url remembered at save time; used when the sidecar image is missing.
     #[serde(default)]
     pub cover_url: Option<String>,
+    /// The credited artists with their server ids, so the artist line links offline too. Rows
+    /// saved before ids were kept have none until `backfill` or a play fills them in.
+    #[serde(default)]
+    pub artist_refs: Vec<ArtistRef>,
+    /// Place on the album, so a saved album plays in order. Zero when unknown.
+    #[serde(default)]
+    pub track_number: u32,
+    #[serde(default)]
+    pub disc_number: u32,
+}
+
+/// What `backfill` learned from one batch: the rows that changed, and every id the server
+/// answered for, changed or not, so a caller does not ask about it again.
+#[derive(Clone, Debug, Default)]
+pub struct Backfill {
+    pub changed: Vec<CachedTrack>,
+    pub answered: Vec<String>,
 }
 
 /// Lyrics kept beside a saved track so they show without the network.
@@ -446,6 +469,9 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
             .to_owned(),
         album_id: track.album_id.clone(),
         cover_url: track.cover.clone().filter(|url| url.starts_with("http")),
+        artist_refs: server_refs(&track.artist_refs),
+        track_number: track.track_number,
+        disc_number: track.disc_number,
     };
 
     let mut guard = held().lock().expect("offline cache lock");
@@ -594,6 +620,195 @@ fn now() -> i64 {
         .as_secs() as i64
 }
 
+/// Ids of saved rows that carry no artist ids yet, so `backfill` knows what to ask about.
+pub fn missing_artists() -> Vec<String> {
+    let Ok(mut guard) = held().lock() else {
+        return Vec::new();
+    };
+    if ensure(&mut guard).is_none() {
+        return Vec::new();
+    }
+    let mut missing: Vec<(i64, String)> = guard
+        .manifest
+        .tracks
+        .values()
+        .filter(|entry| entry.artist_refs.is_empty())
+        .map(|entry| (entry.saved_at, entry.id.clone()))
+        .collect();
+    missing.sort_by_key(|(saved_at, _)| std::cmp::Reverse(*saved_at));
+    missing.into_iter().map(|(_, id)| id).collect()
+}
+
+/// Copy what `tracks` say about their artists and album position onto their saved rows, and
+/// write the index once. Only a track with at least one server artist id counts; the rows
+/// that changed come back so the caller can refresh what it shows.
+pub fn remember(tracks: &[Track]) -> Vec<CachedTrack> {
+    let Ok(mut guard) = held().lock() else {
+        return Vec::new();
+    };
+    let Some(key) = ensure(&mut guard) else {
+        return Vec::new();
+    };
+    let mut changed = Vec::new();
+    let mut previous = Vec::new();
+    for track in tracks {
+        let Some(id) = track.id.as_deref() else {
+            continue;
+        };
+        let refs = server_refs(&track.artist_refs);
+        let Some(entry) = guard.manifest.tracks.get_mut(id) else {
+            continue;
+        };
+        if refs.is_empty() || entry.artist_refs == refs {
+            continue;
+        }
+        previous.push(entry.clone());
+        entry.artist_refs = refs;
+        if track.track_number > 0 {
+            entry.track_number = track.track_number;
+        }
+        if track.disc_number > 0 {
+            entry.disc_number = track.disc_number;
+        }
+        changed.push(entry.clone());
+    }
+    if changed.is_empty() {
+        return changed;
+    }
+    if let Err(error) = persist(&key, &guard.manifest) {
+        log::warn!("offline: cannot record artist ids: {error:#}");
+        for entry in previous {
+            guard.manifest.tracks.insert(entry.id.clone(), entry);
+        }
+        return Vec::new();
+    }
+    changed
+}
+
+/// Ask the server about saved tracks whose rows predate artist ids, a few at a time, and
+/// record the ids it hands back. Fails only when no track at all could be asked about, which
+/// is what a lost connection looks like.
+pub async fn backfill(ids: Vec<String>) -> Result<Backfill> {
+    let Some(client) = client()? else {
+        bail!("sign in to a Subsonic server to look up saved tracks");
+    };
+    let asked = futures::future::join_all(ids.iter().map(|id| client.track(id))).await;
+    let mut found = Vec::new();
+    let mut answered = Vec::new();
+    let mut first_error = None;
+    for (id, result) in ids.iter().zip(asked) {
+        match result {
+            Ok(track) => {
+                answered.push(id.clone());
+                found.push(track);
+            }
+            Err(error) => {
+                log::debug!("offline: cannot look up {id}: {error:#}");
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if answered.is_empty()
+        && let Some(error) = first_error
+    {
+        return Err(error.context("cannot look up saved tracks"));
+    }
+    Ok(Backfill {
+        changed: remember(&found),
+        answered,
+    })
+}
+
+/// A server id of a saved track's artist, among the ids of the artists it is credited to,
+/// whose name matches `name`. Lets a stand-in name link become the real artist page online.
+pub fn artist_id_for_name(name: &str) -> Option<String> {
+    let Ok(mut guard) = held().lock() else {
+        return None;
+    };
+    ensure(&mut guard)?;
+    guard
+        .manifest
+        .tracks
+        .values()
+        .flat_map(|entry| entry.artist_refs.iter())
+        .filter(|artist| same_name(&artist.name, name))
+        .find_map(|artist| artist.id.clone().filter(|id| !is_name_artist_id(id)))
+}
+
+/// The artists a saved row credits: its stored ids, or, for a row saved before those were
+/// kept, the names in its display line, each under a stand-in id from `name_artist_id`.
+pub fn credited(entry: &CachedTrack) -> Vec<ArtistRef> {
+    if !entry.artist_refs.is_empty() {
+        return entry.artist_refs.clone();
+    }
+    split_artists(&entry.artists)
+        .into_iter()
+        .map(|name| ArtistRef {
+            id: Some(name_artist_id(&name)),
+            name,
+        })
+        .collect()
+}
+
+/// The names in a display line of artists, split on the separators players write between
+/// them. A line without one is a single name.
+pub fn split_artists(display: &str) -> Vec<String> {
+    let mut names = vec![display.to_owned()];
+    for separator in ARTIST_SEPARATORS {
+        names = names
+            .iter()
+            .flat_map(|name| name.split(separator))
+            .map(str::to_owned)
+            .collect();
+    }
+    names
+        .into_iter()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Whether two artist names are the same artist, ignoring case.
+pub fn same_name(left: &str, right: &str) -> bool {
+    left == right || left.to_lowercase() == right.to_lowercase()
+}
+
+/// The stand-in artist id for `name` on a row that has no server ids.
+pub fn name_artist_id(name: &str) -> String {
+    format!("{NAME_ARTIST_PREFIX}{name}")
+}
+
+/// Whether `id` is a stand-in from `name_artist_id` rather than a server id.
+pub fn is_name_artist_id(id: &str) -> bool {
+    id.starts_with(NAME_ARTIST_PREFIX)
+}
+
+/// The artist name inside a stand-in id, or `None` for a server id.
+pub fn name_of_artist_id(id: &str) -> Option<&str> {
+    id.strip_prefix(NAME_ARTIST_PREFIX)
+}
+
+/// The refs worth keeping in the index: only server ids count, so a track that carries
+/// stand-ins or no ids at all is stored with none and `backfill` picks it up later.
+fn server_refs(refs: &[ArtistRef]) -> Vec<ArtistRef> {
+    let known = refs.iter().any(|artist| {
+        artist
+            .id
+            .as_deref()
+            .is_some_and(|id| !is_name_artist_id(id))
+    });
+    match known {
+        true => refs
+            .iter()
+            .map(|artist| ArtistRef {
+                name: artist.name.clone(),
+                id: artist.id.clone().filter(|id| !is_name_artist_id(id)),
+            })
+            .collect(),
+        false => Vec::new(),
+    }
+}
+
 /// Path of a ready offline file for playback without loading it into RAM.
 pub fn cached_file(track_id: &str) -> Option<PathBuf> {
     let path = path(track_id)?;
@@ -617,4 +832,105 @@ pub fn cached_duration(track_id: &str) -> Option<Duration> {
 /// Whether `path` is inside the offline cache tree (used by diagnostics).
 pub fn contains(path: &Path) -> bool {
     path.starts_with(base())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_index_written_before_artist_ids_still_loads() {
+        let json = r#"{
+            "version": 1,
+            "server": "account",
+            "tracks": {
+                "t1": {
+                    "id": "t1",
+                    "name": "Song",
+                    "artists": "Alpha, Beta",
+                    "album": "Record",
+                    "duration_ms": 1000,
+                    "bytes": 10,
+                    "saved_at": 5,
+                    "file": "t1.audio",
+                    "album_id": "al1"
+                }
+            }
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).expect("old index parses");
+        let entry = &manifest.tracks["t1"];
+
+        assert!(entry.artist_refs.is_empty());
+        assert_eq!(entry.track_number, 0);
+        assert_eq!(entry.cover_url, None);
+        let names: Vec<_> = credited(entry).into_iter().map(|a| a.name).collect();
+        assert_eq!(names, ["Alpha", "Beta"]);
+    }
+
+    #[test]
+    fn stored_ids_round_trip_and_win_over_the_display_line() {
+        let entry = CachedTrack {
+            id: "t1".into(),
+            name: "Song".into(),
+            artists: "Alpha feat. Beta".into(),
+            album: "Record".into(),
+            duration_ms: 1,
+            bytes: 1,
+            saved_at: 1,
+            file: "t1.audio".into(),
+            album_id: None,
+            cover_url: None,
+            artist_refs: vec![ArtistRef {
+                name: "Alpha".into(),
+                id: Some("ar1".into()),
+            }],
+            track_number: 3,
+            disc_number: 1,
+        };
+        let json = serde_json::to_string(&entry).expect("serializes");
+        let back: CachedTrack = serde_json::from_str(&json).expect("parses");
+
+        assert_eq!(back.artist_refs, entry.artist_refs);
+        assert_eq!(back.track_number, 3);
+        assert_eq!(credited(&back), entry.artist_refs);
+    }
+
+    #[test]
+    fn a_display_line_splits_into_stand_in_artists() {
+        assert_eq!(
+            split_artists("Alpha, Beta \u{2022} Gamma; Delta / Epsilon"),
+            ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+        );
+        assert_eq!(split_artists("Simon & Garfunkel"), ["Simon & Garfunkel"]);
+        assert!(split_artists("  ").is_empty());
+
+        let id = name_artist_id("Alpha");
+        assert!(is_name_artist_id(&id));
+        assert_eq!(name_of_artist_id(&id), Some("Alpha"));
+        assert_eq!(name_of_artist_id("ar1"), None);
+    }
+
+    #[test]
+    fn only_server_ids_are_kept_in_the_index() {
+        let stand_in = ArtistRef {
+            name: "Alpha".into(),
+            id: Some(name_artist_id("Alpha")),
+        };
+        assert!(server_refs(std::slice::from_ref(&stand_in)).is_empty());
+        assert!(
+            server_refs(&[ArtistRef {
+                name: "Alpha".into(),
+                id: None
+            }])
+            .is_empty()
+        );
+
+        let real = ArtistRef {
+            name: "Beta".into(),
+            id: Some("ar2".into()),
+        };
+        let kept = server_refs(&[real.clone(), stand_in]);
+        assert_eq!(kept[0], real);
+        assert_eq!(kept[1].id, None);
+    }
 }

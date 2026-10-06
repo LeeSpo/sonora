@@ -427,6 +427,28 @@ impl Queue {
         self.revision
     }
 
+    /// Give every queued copy of `track_id` that has no server artist ids yet `refs`, so its
+    /// artist line links wherever the queue is shown.
+    pub fn amend_artists(&mut self, track_id: &str, refs: &[ArtistRef], cx: &mut Context<Self>) {
+        let mut amended = false;
+        let tracks = self
+            .past
+            .iter_mut()
+            .chain(self.current.iter_mut())
+            .chain(self.upcoming.iter_mut())
+            .chain(self.source.iter_mut());
+        for track in tracks {
+            if track.id.as_deref() == Some(track_id) && !crate::offline::linked(&track.artist_refs)
+            {
+                track.artist_refs = refs.to_vec();
+                amended = true;
+            }
+        }
+        if amended {
+            self.changed(cx);
+        }
+    }
+
     pub fn past(&self) -> impl ExactSizeIterator<Item = &Track> {
         self.past.iter()
     }

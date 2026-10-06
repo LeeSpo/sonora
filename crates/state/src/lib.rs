@@ -47,7 +47,7 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
-pub use offline::{Offline, OfflineEntry, OfflineStatus};
+pub use offline::{Offline, OfflineAlbum, OfflineArtist, OfflineEntry, OfflineStatus};
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;
@@ -244,7 +244,16 @@ pub fn init(
             cx,
         )
     });
-    let offline = cx.new(|cx| Offline::new(session.clone(), io.clone(), cx));
+    let offline = cx.new(|cx| {
+        Offline::new(
+            session.clone(),
+            network.clone(),
+            playback.clone(),
+            queue.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     let lyrics = cx.new(|cx| {
         Lyrics::new(
             playback.clone(),

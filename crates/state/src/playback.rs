@@ -8,8 +8,8 @@ use anyhow::Result;
 use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
 use music::equalizer::{Equalizer, Gains};
 use music::{
-    MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory,
-    Player, Spectrum, Track,
+    ArtistRef, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
+    PlaybackFactory, Player, Spectrum, Track,
 };
 use ui::{Pin, PinKind};
 
@@ -1940,6 +1940,19 @@ impl Playback {
 
     pub fn track(&self) -> Option<&Track> {
         self.track.as_ref()
+    }
+
+    /// Give the playing track `refs` when it is `track_id` and has no server artist ids yet,
+    /// so the artist line under it becomes a link once a saved track's ids are known.
+    pub fn amend_artists(&mut self, track_id: &str, refs: &[ArtistRef], cx: &mut Context<Self>) {
+        let Some(track) = self.track.as_mut() else {
+            return;
+        };
+        if track.id.as_deref() != Some(track_id) || crate::offline::linked(&track.artist_refs) {
+            return;
+        }
+        track.artist_refs = refs.to_vec();
+        cx.notify();
     }
 
     /// How far through the track `position` is, from 0 to 1.
