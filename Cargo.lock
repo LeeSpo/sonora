@@ -4549,6 +4549,7 @@ dependencies = [
  "flate2",
  "futures",
  "http",
+ "image",
  "jiff",
  "kakasi",
  "librespot-core",

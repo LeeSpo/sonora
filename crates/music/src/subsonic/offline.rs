@@ -22,8 +22,16 @@ const MANIFEST: &str = "manifest.json";
 const AUDIO_EXT: &str = "audio";
 /// Sidecar with the lyrics kept for a saved track (`{id}.lyrics.json`).
 const LYRICS_EXT: &str = "lyrics.json";
-/// Sidecar with the cover image kept for a saved track (`{id}.cover`).
+/// Legacy per-track cover sidecar (`{id}.cover`). Migrated into `covers/` on load.
 const COVER_EXT: &str = "cover";
+/// Directory under the account root that holds one cover per album (or per track with no album).
+const COVER_DIR: &str = "covers";
+/// Extension of the kept cover file after downscale (always JPEG).
+const COVER_FILE_EXT: &str = "jpg";
+/// Longest edge kept for an offline cover, in pixels.
+const COVER_MAX: u32 = 600;
+/// JPEG quality for a kept offline cover.
+const COVER_QUALITY: u8 = 85;
 /// Prefix of the stand-in artist id a saved track carries when its row predates artist ids.
 /// The rest of the id is the artist's name, so the Downloaded screen can still group by it.
 pub const NAME_ARTIST_PREFIX: &str = "offline-artist:";
@@ -81,6 +89,29 @@ pub struct CachedLyrics {
     pub artist: String,
 }
 
+/// How much space the signed-in account's offline saves take on disk.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub tracks: usize,
+    /// Audio + covers + lyrics sidecars.
+    pub bytes: u64,
+    pub audio_bytes: u64,
+    pub cover_bytes: u64,
+    pub lyrics_bytes: u64,
+}
+
+/// One album among the saved tracks, with how much space its copies take.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlbumGroup {
+    pub album_id: Option<String>,
+    pub name: String,
+    pub artists: String,
+    pub cover: Option<String>,
+    pub track_count: usize,
+    pub bytes: u64,
+    pub track_ids: Vec<String>,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Manifest {
     version: u32,
@@ -90,12 +121,32 @@ struct Manifest {
 }
 
 fn base() -> PathBuf {
+    #[cfg(test)]
+    if let Some(root) = test_root() {
+        return root;
+    }
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("sonora")
         .join("offline")
         .join("subsonic")
 }
+
+#[cfg(test)]
+fn test_root() -> Option<PathBuf> {
+    TEST_ROOT.lock().ok().and_then(|guard| guard.clone())
+}
+
+#[cfg(test)]
+fn test_key() -> Option<String> {
+    TEST_KEY.lock().ok().and_then(|guard| guard.clone())
+}
+
+#[cfg(test)]
+static TEST_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+#[cfg(test)]
+static TEST_KEY: Mutex<Option<String>> = Mutex::new(None);
 
 /// Stable directory name for an account: hash of [`Credentials::account_key`], so multi-URL
 /// picks for the same account share one cache and a different account never overwrites it.
@@ -132,6 +183,140 @@ fn file_for_in(dir: &Path, id: &str) -> PathBuf {
 
 fn sidecar_in(dir: &Path, id: &str, ext: &str) -> PathBuf {
     dir.join(format!("{}.{ext}", safe_name(id)))
+}
+
+fn covers_dir(dir: &Path) -> PathBuf {
+    dir.join(COVER_DIR)
+}
+
+/// Stable cover file key: album id when present, otherwise the track id.
+fn cover_key(album_id: Option<&str>, track_id: &str) -> String {
+    match album_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(album) => safe_name(album),
+        None => safe_name(track_id),
+    }
+}
+
+fn cover_path_in(dir: &Path, key: &str) -> PathBuf {
+    covers_dir(dir).join(format!("{key}.{COVER_FILE_EXT}"))
+}
+
+fn legacy_cover_in(dir: &Path, track_id: &str) -> PathBuf {
+    sidecar_in(dir, track_id, COVER_EXT)
+}
+
+fn file_size(path: &Path) -> u64 {
+    fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
+/// Downscale `bytes` to at most [`COVER_MAX`] on the long edge and write a JPEG to `dest`.
+fn write_cover_bytes(dest: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).context("cannot create the offline covers folder")?;
+    }
+    let image = image::load_from_memory(bytes).context("cannot decode the cover image")?;
+    let image = if image.width() > COVER_MAX || image.height() > COVER_MAX {
+        image.thumbnail(COVER_MAX, COVER_MAX)
+    } else {
+        image
+    };
+    let rgb = image.to_rgb8();
+    let mut encoded = Vec::new();
+    let mut encoder =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, COVER_QUALITY);
+    encoder
+        .encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .context("cannot encode the cover as JPEG")?;
+    let tmp = dest.with_extension("jpg.tmp");
+    fs::write(&tmp, &encoded).context("cannot write the cover")?;
+    fs::rename(&tmp, dest).context("cannot replace the cover")?;
+    Ok(())
+}
+
+/// Keep a cover for `track` under the album (or track) key. Best effort.
+fn keep_cover(dir: &Path, track_id: &str, album_id: Option<&str>, bytes: &[u8]) {
+    let key = cover_key(album_id, track_id);
+    let dest = cover_path_in(dir, &key);
+    if dest.is_file() && file_size(&dest) > 0 {
+        return;
+    }
+    if let Err(error) = write_cover_bytes(&dest, bytes) {
+        log::debug!("offline: cannot keep the cover for {track_id}: {error:#}");
+    }
+}
+
+/// How many saved tracks still share the cover keyed by `album_id` / `track_id`.
+fn cover_holders(manifest: &Manifest, album_id: Option<&str>, track_id: &str) -> usize {
+    let key = cover_key(album_id, track_id);
+    manifest
+        .tracks
+        .values()
+        .filter(|entry| cover_key(entry.album_id.as_deref(), &entry.id) == key)
+        .count()
+}
+
+/// Drop the cover file when nothing left references it. Also clears a legacy per-track sidecar.
+fn drop_cover_for(dir: &Path, manifest: &Manifest, album_id: Option<&str>, track_id: &str) {
+    let legacy = legacy_cover_in(dir, track_id);
+    if legacy.exists() {
+        let _ = fs::remove_file(&legacy);
+    }
+    if cover_holders(manifest, album_id, track_id) > 0 {
+        return;
+    }
+    let path = cover_path_in(dir, &cover_key(album_id, track_id));
+    if path.exists() {
+        let _ = fs::remove_file(&path);
+    }
+}
+
+/// Move legacy `{id}.cover` sidecars into `covers/{key}.jpg`, deleting the duplicates.
+fn migrate_covers(dir: &Path, manifest: &Manifest) {
+    for entry in manifest.tracks.values() {
+        let legacy = legacy_cover_in(dir, &entry.id);
+        if !legacy.is_file() {
+            continue;
+        }
+        let dest = cover_path_in(dir, &cover_key(entry.album_id.as_deref(), &entry.id));
+        if !dest.is_file() || file_size(&dest) == 0 {
+            match fs::read(&legacy) {
+                Ok(bytes) if !bytes.is_empty() => {
+                    if let Err(error) = write_cover_bytes(&dest, &bytes) {
+                        log::debug!(
+                            "offline: cannot migrate cover for {}: {error:#}",
+                            entry.id
+                        );
+                        continue;
+                    }
+                }
+                _ => continue,
+            }
+        }
+        let _ = fs::remove_file(&legacy);
+    }
+}
+
+/// Cover image for a saved track as a `file://` url: per-album file first, then legacy sidecar.
+fn cover_url_in(dir: &Path, track_id: &str, album_id: Option<&str>) -> Option<String> {
+    let album = cover_path_in(dir, &cover_key(album_id, track_id));
+    if let Ok(meta) = fs::metadata(&album)
+        && meta.is_file()
+        && meta.len() > 0
+    {
+        return Some(format!("file://{}", album.display()));
+    }
+    let legacy = legacy_cover_in(dir, track_id);
+    let meta = fs::metadata(&legacy).ok()?;
+    (meta.is_file() && meta.len() > 0).then(|| format!("file://{}", legacy.display()))
+}
+
+fn bytes_under(dir: &Path, relative: &str) -> u64 {
+    file_size(&dir.join(relative))
 }
 
 fn file_for(id: &str) -> Option<PathBuf> {
@@ -264,10 +449,18 @@ fn validate(account_key: &str, manifest: &mut Manifest) -> bool {
         dirty = true;
     }
 
+    // Fold old per-track covers into one file per album before sweeping orphans.
+    migrate_covers(&dir, manifest);
+
     let known: HashSet<String> = manifest
         .tracks
         .values()
         .map(|entry| entry.file.clone())
+        .collect();
+    let cover_keys: HashSet<String> = manifest
+        .tracks
+        .values()
+        .map(|entry| cover_key(entry.album_id.as_deref(), &entry.id))
         .collect();
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -275,7 +468,7 @@ fn validate(account_key: &str, manifest: &mut Manifest) -> bool {
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if name == MANIFEST || name.ends_with(".json.tmp") {
+            if name == MANIFEST || name == COVER_DIR || name.ends_with(".json.tmp") {
                 continue;
             }
             let path = entry.path();
@@ -299,6 +492,23 @@ fn validate(account_key: &str, manifest: &mut Manifest) -> bool {
             }
         }
     }
+    // Drop cover files no album still references.
+    let covers = covers_dir(&dir);
+    if let Ok(entries) = fs::read_dir(&covers) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(stem) = name.strip_suffix(&format!(".{COVER_FILE_EXT}")) else {
+                continue;
+            };
+            if !cover_keys.contains(stem) {
+                log::info!("offline: removing orphan cover {name}");
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
     dirty
 }
 
@@ -319,6 +529,10 @@ fn persist(account_key: &str, manifest: &Manifest) -> Result<()> {
 }
 
 fn server_key() -> Option<String> {
+    #[cfg(test)]
+    if let Some(key) = test_key() {
+        return Some(key);
+    }
     auth::load().map(|credentials| credentials.account_key())
 }
 
@@ -431,12 +645,11 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
     }
 
     // Best effort: the audio is what matters, so a missing cover or lyric never fails the save.
+    // One cover per album (keyed by album id, or the track id when there is none).
     if let Some(url) = track.cover.as_deref().filter(|url| url.starts_with("http")) {
         match client.fetch_bytes(url).await {
             Ok(bytes) if !bytes.is_empty() => {
-                if let Err(error) = fs::write(sidecar_in(&dir, id, COVER_EXT), &bytes) {
-                    log::debug!("offline: cannot keep the cover for {id}: {error}");
-                }
+                keep_cover(&dir, id, track.album_id.as_deref(), &bytes);
             }
             Ok(_) => {}
             Err(error) => log::debug!("offline: cannot fetch the cover for {id}: {error:#}"),
@@ -519,6 +732,10 @@ pub fn remove(track_id: &str) -> Result<()> {
         return Err(error).context("cannot update the offline index");
     }
     let named = root_for(&key).join(&entry.file);
+    let album_id = entry.album_id.clone();
+    let dir = root_for(&key);
+    // Cover may still be shared by other tracks; decide after the row is gone.
+    drop_cover_for(&dir, &guard.manifest, album_id.as_deref(), track_id);
     drop(guard);
     // Index already committed: a file delete failure leaves an orphan that validate sweeps.
     if named.exists()
@@ -539,6 +756,8 @@ fn remove_files_for(track_id: &str, account_key: Option<&str>) {
         dirs.push(root_for(key));
     }
     for dir in dirs {
+        // Album covers are shared; `drop_cover_for` removes them when the last track goes.
+        // Only the legacy per-track sidecar is cleared here.
         for path in [
             file_for_in(&dir, track_id),
             sidecar_in(&dir, track_id, LYRICS_EXT),
@@ -551,11 +770,20 @@ fn remove_files_for(track_id: &str, account_key: Option<&str>) {
     }
 }
 
-/// Cover image kept beside a saved track, as a `file://` url the artwork loader reads.
+/// Cover image kept for a saved track, as a `file://` url the artwork loader reads.
+/// Prefers the per-album file under `covers/`, then a legacy per-track sidecar.
 pub fn cover(track_id: &str) -> Option<String> {
-    let path = sidecar_in(&root()?, track_id, COVER_EXT);
-    let meta = fs::metadata(&path).ok()?;
-    (meta.is_file() && meta.len() > 0).then(|| format!("file://{}", path.display()))
+    let Ok(mut guard) = held().lock() else {
+        return None;
+    };
+    let key = ensure(&mut guard)?;
+    let dir = root_for(&key);
+    let album_id = guard
+        .manifest
+        .tracks
+        .get(track_id)
+        .and_then(|entry| entry.album_id.clone());
+    cover_url_in(&dir, track_id, album_id.as_deref())
 }
 
 /// Lyrics kept beside a saved track, if any were found when it was saved or played.
@@ -809,6 +1037,165 @@ fn server_refs(refs: &[ArtistRef]) -> Vec<ArtistRef> {
     }
 }
 
+/// How much space the signed-in account's offline saves take (audio + covers + lyrics).
+pub fn usage() -> Usage {
+    let Ok(mut guard) = held().lock() else {
+        return Usage::default();
+    };
+    let Some(key) = ensure(&mut guard) else {
+        return Usage::default();
+    };
+    usage_of(&root_for(&key), &guard.manifest)
+}
+
+fn usage_of(dir: &Path, manifest: &Manifest) -> Usage {
+    let mut audio_bytes = 0u64;
+    let mut lyrics_bytes = 0u64;
+    for entry in manifest.tracks.values() {
+        audio_bytes += bytes_under(dir, &entry.file);
+        lyrics_bytes += file_size(&sidecar_in(dir, &entry.id, LYRICS_EXT));
+    }
+    let mut cover_bytes = 0u64;
+    let mut seen = HashSet::new();
+    for entry in manifest.tracks.values() {
+        let key = cover_key(entry.album_id.as_deref(), &entry.id);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        cover_bytes += file_size(&cover_path_in(dir, &key));
+        // A still-unmigrated legacy sidecar counts until migrate_covers runs.
+        cover_bytes += file_size(&legacy_cover_in(dir, &entry.id));
+    }
+    Usage {
+        tracks: manifest.tracks.len(),
+        bytes: audio_bytes + cover_bytes + lyrics_bytes,
+        audio_bytes,
+        cover_bytes,
+        lyrics_bytes,
+    }
+}
+
+/// Bytes on disk for the given track ids (audio + their lyrics; covers counted once per album).
+pub fn size_of(track_ids: &[String]) -> u64 {
+    let Ok(mut guard) = held().lock() else {
+        return 0;
+    };
+    let Some(key) = ensure(&mut guard) else {
+        return 0;
+    };
+    let dir = root_for(&key);
+    let mut total = 0u64;
+    let mut covers = HashSet::new();
+    for id in track_ids {
+        let Some(entry) = guard.manifest.tracks.get(id) else {
+            continue;
+        };
+        total += bytes_under(&dir, &entry.file);
+        total += file_size(&sidecar_in(&dir, &entry.id, LYRICS_EXT));
+        let cover = cover_key(entry.album_id.as_deref(), &entry.id);
+        if covers.insert(cover.clone()) {
+            total += file_size(&cover_path_in(&dir, &cover));
+            total += file_size(&legacy_cover_in(&dir, &entry.id));
+        }
+    }
+    total
+}
+
+/// Saved albums with song count and bytes, newest album first (by latest saved_at in it).
+pub fn albums() -> Vec<AlbumGroup> {
+    let Ok(mut guard) = held().lock() else {
+        return Vec::new();
+    };
+    let Some(key) = ensure(&mut guard) else {
+        return Vec::new();
+    };
+    albums_of(&root_for(&key), &guard.manifest)
+}
+
+fn albums_of(dir: &Path, manifest: &Manifest) -> Vec<AlbumGroup> {
+    let mut groups: HashMap<String, AlbumGroup> = HashMap::new();
+    let mut latest: HashMap<String, i64> = HashMap::new();
+    for entry in manifest.tracks.values() {
+        if entry.album.trim().is_empty() && entry.album_id.is_none() {
+            continue;
+        }
+        let group_key = entry
+            .album_id
+            .clone()
+            .unwrap_or_else(|| format!("name:{}", entry.album.to_lowercase()));
+        let audio = bytes_under(dir, &entry.file);
+        let lyrics = file_size(&sidecar_in(dir, &entry.id, LYRICS_EXT));
+        let cover_key_now = cover_key(entry.album_id.as_deref(), &entry.id);
+        let cover_bytes = match groups.contains_key(&group_key) {
+            true => 0,
+            false => {
+                file_size(&cover_path_in(dir, &cover_key_now))
+                    + file_size(&legacy_cover_in(dir, &entry.id))
+            }
+        };
+        let slot = groups.entry(group_key.clone()).or_insert_with(|| AlbumGroup {
+            album_id: entry.album_id.clone(),
+            name: entry.album.clone(),
+            artists: entry.artists.clone(),
+            cover: cover_url_in(dir, &entry.id, entry.album_id.as_deref()),
+            track_count: 0,
+            bytes: 0,
+            track_ids: Vec::new(),
+        });
+        if slot.cover.is_none() {
+            slot.cover = cover_url_in(dir, &entry.id, entry.album_id.as_deref());
+        }
+        if slot.artists.is_empty() {
+            slot.artists = entry.artists.clone();
+        }
+        slot.track_count += 1;
+        slot.bytes += audio + lyrics + cover_bytes;
+        slot.track_ids.push(entry.id.clone());
+        let seen = latest.entry(group_key).or_insert(entry.saved_at);
+        *seen = (*seen).max(entry.saved_at);
+    }
+    let mut albums: Vec<_> = groups.into_iter().map(|(key, group)| (latest[&key], group)).collect();
+    albums.sort_by_key(|(saved, group)| (std::cmp::Reverse(*saved), group.name.to_lowercase()));
+    albums.into_iter().map(|(_, group)| group).collect()
+}
+
+/// Track ids saved under `album_id`, or under the album name when `album_id` is `None`.
+pub fn tracks_for_album(album_id: Option<&str>, album_name: &str) -> Vec<String> {
+    let Ok(mut guard) = held().lock() else {
+        return Vec::new();
+    };
+    if ensure(&mut guard).is_none() {
+        return Vec::new();
+    }
+    guard
+        .manifest
+        .tracks
+        .values()
+        .filter(|entry| match album_id {
+            Some(want) => entry.album_id.as_deref() == Some(want),
+            None => same_name(&entry.album, album_name),
+        })
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// Human-readable size for the UI (e.g. `3.2 GB`, `450 MB`, `12 KB`).
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1} GB", value / GB)
+    } else if value >= MB {
+        format!("{:.1} MB", value / MB)
+    } else if value >= KB {
+        format!("{:.0} KB", value / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// Path of a ready offline file for playback without loading it into RAM.
 pub fn cached_file(track_id: &str) -> Option<PathBuf> {
     let path = path(track_id)?;
@@ -932,5 +1319,268 @@ mod tests {
         let kept = server_refs(&[real.clone(), stand_in]);
         assert_eq!(kept[0], real);
         assert_eq!(kept[1].id, None);
+    }
+
+    fn seed_entry(id: &str, album: &str, album_id: Option<&str>, bytes: u64) -> CachedTrack {
+        CachedTrack {
+            id: id.into(),
+            name: format!("Song {id}"),
+            artists: "Alpha".into(),
+            album: album.into(),
+            duration_ms: 1000,
+            bytes,
+            saved_at: 1,
+            file: format!("{id}.audio"),
+            album_id: album_id.map(str::to_owned),
+            cover_url: None,
+            artist_refs: Vec::new(),
+            track_number: 1,
+            disc_number: 1,
+        }
+    }
+
+    /// Offline filesystem tests share process-wide TEST_ROOT / held state, so only one
+    /// runs at a time.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_cache(f: impl FnOnce(&Path)) {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let key = "test-account";
+        {
+            let mut guard = TEST_ROOT.lock().expect("root lock");
+            *guard = Some(root.path().to_path_buf());
+        }
+        {
+            let mut guard = TEST_KEY.lock().expect("key lock");
+            *guard = Some(key.into());
+        }
+        // Reset the in-memory index so it loads from this temp root.
+        {
+            let mut held = held().lock().expect("held");
+            held.key.clear();
+            held.manifest = Manifest {
+                version: 1,
+                server: key.into(),
+                tracks: Default::default(),
+            };
+        }
+        f(root.path());
+        {
+            let mut guard = TEST_ROOT.lock().expect("root lock");
+            *guard = None;
+        }
+        {
+            let mut guard = TEST_KEY.lock().expect("key lock");
+            *guard = None;
+        }
+        {
+            let mut held = held().lock().expect("held");
+            held.key.clear();
+            held.manifest = Manifest {
+                version: 1,
+                ..Manifest::default()
+            };
+        }
+    }
+
+    fn tiny_jpeg() -> Vec<u8> {
+        // 2x2 red JPEG
+        let mut rgb = image::RgbImage::new(2, 2);
+        for pixel in rgb.pixels_mut() {
+            *pixel = image::Rgb([255, 0, 0]);
+        }
+        let mut out = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90);
+        encoder
+            .encode(rgb.as_raw(), 2, 2, image::ExtendedColorType::Rgb8)
+            .expect("encode");
+        out
+    }
+
+    #[test]
+    fn format_bytes_uses_sensible_units() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(2048), "2 KB");
+        assert_eq!(format_bytes(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(format_bytes((3.2 * 1024.0 * 1024.0 * 1024.0) as u64), "3.2 GB");
+    }
+
+    #[test]
+    fn cover_key_prefers_album_id() {
+        assert_eq!(cover_key(Some("al1"), "t1"), "al1");
+        assert_eq!(cover_key(None, "t1"), "t1");
+        assert_eq!(cover_key(Some("  "), "t1"), "t1");
+    }
+
+    #[test]
+    fn usage_counts_audio_covers_and_lyrics() {
+        with_cache(|root| {
+            let dir = root_for("test-account");
+            fs::create_dir_all(covers_dir(&dir)).unwrap();
+            let mut manifest = Manifest {
+                version: 1,
+                server: "test-account".into(),
+                tracks: Default::default(),
+            };
+            let a = seed_entry("t1", "Record", Some("al1"), 100);
+            let b = seed_entry("t2", "Record", Some("al1"), 200);
+            fs::write(dir.join(&a.file), vec![0u8; 100]).unwrap();
+            fs::write(dir.join(&b.file), vec![0u8; 200]).unwrap();
+            fs::write(sidecar_in(&dir, "t1", LYRICS_EXT), b"{}").unwrap();
+            write_cover_bytes(&cover_path_in(&dir, "al1"), &tiny_jpeg()).unwrap();
+            manifest.tracks.insert("t1".into(), a);
+            manifest.tracks.insert("t2".into(), b);
+            persist("test-account", &manifest).unwrap();
+            {
+                let mut held = held().lock().unwrap();
+                held.key = "test-account".into();
+                held.manifest = manifest;
+            }
+
+            let used = usage();
+            assert_eq!(used.tracks, 2);
+            assert_eq!(used.audio_bytes, 300);
+            assert!(used.lyrics_bytes > 0);
+            assert!(used.cover_bytes > 0);
+            assert_eq!(
+                used.bytes,
+                used.audio_bytes + used.cover_bytes + used.lyrics_bytes
+            );
+
+            let albums = albums();
+            assert_eq!(albums.len(), 1);
+            assert_eq!(albums[0].track_count, 2);
+            assert_eq!(albums[0].album_id.as_deref(), Some("al1"));
+            assert!(albums[0].bytes >= 300);
+            assert!(albums[0].cover.is_some());
+            let _ = root;
+        });
+    }
+
+    #[test]
+    fn per_album_cover_is_shared_and_dropped_with_last_track() {
+        with_cache(|_| {
+            let dir = root_for("test-account");
+            fs::create_dir_all(&dir).unwrap();
+            let jpeg = tiny_jpeg();
+            keep_cover(&dir, "t1", Some("al1"), &jpeg);
+            keep_cover(&dir, "t2", Some("al1"), &jpeg);
+            let cover = cover_path_in(&dir, "al1");
+            assert!(cover.is_file());
+            // Second keep must not rewrite / duplicate.
+            let size = file_size(&cover);
+            keep_cover(&dir, "t3", Some("al1"), &jpeg);
+            assert_eq!(file_size(&cover), size);
+
+            let mut manifest = Manifest {
+                version: 1,
+                server: "test-account".into(),
+                tracks: Default::default(),
+            };
+            manifest
+                .tracks
+                .insert("t1".into(), seed_entry("t1", "Record", Some("al1"), 1));
+            manifest
+                .tracks
+                .insert("t2".into(), seed_entry("t2", "Record", Some("al1"), 1));
+            fs::write(dir.join("t1.audio"), b"a").unwrap();
+            fs::write(dir.join("t2.audio"), b"b").unwrap();
+            persist("test-account", &manifest).unwrap();
+            {
+                let mut held = held().lock().unwrap();
+                held.key = "test-account".into();
+                held.manifest = manifest;
+            }
+
+            remove("t1").unwrap();
+            assert!(cover.is_file(), "cover stays while another track uses it");
+            assert!(cover_url_in(&dir, "t2", Some("al1")).is_some());
+
+            remove("t2").unwrap();
+            assert!(!cover.is_file(), "cover goes with the last track");
+        });
+    }
+
+    #[test]
+    fn legacy_per_track_covers_migrate_into_album_file() {
+        with_cache(|_| {
+            let dir = root_for("test-account");
+            fs::create_dir_all(&dir).unwrap();
+            let jpeg = tiny_jpeg();
+            // Two tracks of the same album each have a legacy sidecar.
+            fs::write(legacy_cover_in(&dir, "t1"), &jpeg).unwrap();
+            fs::write(legacy_cover_in(&dir, "t2"), &jpeg).unwrap();
+            fs::write(dir.join("t1.audio"), b"a").unwrap();
+            fs::write(dir.join("t2.audio"), b"b").unwrap();
+
+            let mut manifest = Manifest {
+                version: 1,
+                server: "test-account".into(),
+                tracks: Default::default(),
+            };
+            manifest
+                .tracks
+                .insert("t1".into(), seed_entry("t1", "Record", Some("al1"), 1));
+            manifest
+                .tracks
+                .insert("t2".into(), seed_entry("t2", "Record", Some("al1"), 1));
+            validate("test-account", &mut manifest);
+            persist("test-account", &manifest).unwrap();
+
+            let album_cover = cover_path_in(&dir, "al1");
+            assert!(album_cover.is_file());
+            assert!(!legacy_cover_in(&dir, "t1").exists());
+            assert!(!legacy_cover_in(&dir, "t2").exists());
+            assert!(cover_url_in(&dir, "t1", Some("al1")).is_some());
+            assert!(cover_url_in(&dir, "t2", Some("al1")).is_some());
+        });
+    }
+
+    #[test]
+    fn clear_by_album_removes_its_tracks_and_cover() {
+        with_cache(|_| {
+            let dir = root_for("test-account");
+            fs::create_dir_all(&dir).unwrap();
+            let jpeg = tiny_jpeg();
+            keep_cover(&dir, "t1", Some("al1"), &jpeg);
+            keep_cover(&dir, "other", Some("al2"), &jpeg);
+            fs::write(dir.join("t1.audio"), b"a").unwrap();
+            fs::write(dir.join("t2.audio"), b"b").unwrap();
+            fs::write(dir.join("t3.audio"), b"c").unwrap();
+
+            let mut manifest = Manifest {
+                version: 1,
+                server: "test-account".into(),
+                tracks: Default::default(),
+            };
+            for (id, album, al) in [
+                ("t1", "Record", Some("al1")),
+                ("t2", "Record", Some("al1")),
+                ("t3", "Other", Some("al2")),
+            ] {
+                manifest
+                    .tracks
+                    .insert(id.into(), seed_entry(id, album, al, 1));
+            }
+            persist("test-account", &manifest).unwrap();
+            {
+                let mut held = held().lock().unwrap();
+                held.key = "test-account".into();
+                held.manifest = manifest;
+            }
+
+            let doomed = tracks_for_album(Some("al1"), "Record");
+            assert_eq!(doomed.len(), 2);
+            let freed = size_of(&doomed);
+            assert!(freed > 0);
+            for id in &doomed {
+                remove(id).unwrap();
+            }
+            assert!(!cover_path_in(&dir, "al1").is_file());
+            assert!(cover_path_in(&dir, "al2").is_file());
+            assert_eq!(list().len(), 1);
+            assert_eq!(list()[0].id, "t3");
+        });
     }
 }

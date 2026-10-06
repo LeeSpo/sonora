@@ -44,6 +44,8 @@ pub struct OfflineAlbum {
     pub name: String,
     pub cover: Option<String>,
     pub tracks: Vec<Track>,
+    /// Audio + lyrics + this album's cover, when known.
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -430,6 +432,21 @@ impl Offline {
         &self.listed
     }
 
+    /// How much space ready offline saves take on disk.
+    pub fn usage(&self) -> music::offline::Usage {
+        music::offline::usage()
+    }
+
+    /// Saved albums with song count and bytes, for the Downloaded screen.
+    pub fn albums(&self) -> Vec<music::offline::AlbumGroup> {
+        music::offline::albums()
+    }
+
+    /// Bytes the given ready track ids take (for confirmations).
+    pub fn size_of(&self, track_ids: &[String]) -> u64 {
+        music::offline::size_of(track_ids)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.listed.is_empty()
     }
@@ -733,6 +750,7 @@ pub(crate) fn artist_tracks(key: &str, tracks: &[Track]) -> Option<OfflineArtist
                 name: track.album.clone(),
                 cover: track.cover.clone(),
                 tracks: vec![track.clone()],
+                bytes: 0,
             }),
         }
     }
@@ -756,6 +774,15 @@ pub(crate) fn artist_tracks(key: &str, tracks: &[Track]) -> Option<OfflineArtist
             .find_map(|track| track.artist_refs.first().map(|artist| artist.name.clone()))
             .unwrap_or_default()
     });
+    for album in &mut albums {
+        let ids: Vec<String> = album
+            .tracks
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .collect();
+        album.bytes = music::offline::size_of(&ids);
+    }
+
     let tracks = albums
         .iter()
         .flat_map(|album| album.tracks.iter().cloned())
