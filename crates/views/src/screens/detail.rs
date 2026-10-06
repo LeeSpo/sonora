@@ -508,10 +508,31 @@ impl DetailView {
         let button = Button::new("detail-save-offline")
             .outline()
             .icon("icons/download.svg");
+        let name = self
+            .detail
+            .read(cx)
+            .header()
+            .map(|header| header.title.to_string())
+            .unwrap_or_default();
+        let playlist = matches!(
+            self.detail.read(cx).header().map(|header| header.kind),
+            Some(Collection::Playlist)
+        );
+        let saved_ids: Vec<String> = tracks
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .filter(|id| {
+                let offline = offline.read(cx);
+                offline.is_saved(id)
+            })
+            .collect();
         Some(if all_saved {
             button
                 .tint(theme.primary)
-                .tooltip("offline-collection-saved")
+                .tooltip("offline-collection-clear")
+                .on_click(move |_, _, cx| {
+                    Confirm::offline_collection(name.clone(), saved_ids.clone(), playlist, cx);
+                })
         } else if unsaved.is_empty() && any_saving {
             button.tooltip("offline-status-saving").disabled(true)
         } else {

@@ -510,9 +510,7 @@ impl ItemMenu {
                         )
                         .icon("icons/trash-2.svg")
                         .on_click(move |_, _, cx| {
-                            Offline::global(cx).update(cx, |offline, cx| {
-                                offline.remove_tracks(held.clone(), cx);
-                            });
+                            crate::shared::confirm::Confirm::offline_tracks(held.clone(), cx);
                         }),
                     );
                 } else if !unsaved.is_empty() {

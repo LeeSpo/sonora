@@ -236,6 +236,22 @@ menu-remove-tracks-offline = 移除 { $count } 个离线副本
 offline-clear-failed = 清除失败项
 offline-collection-save = 全部保存到离线
 offline-collection-saved = 已全部保存到离线
+
+offline-albums = 已下载的专辑
+offline-songs = 已下载的歌曲
+offline-album-meta = { $count } 首 · { $size }
+offline-clear-album = 移除离线专辑
+offline-clear-all = 清空全部下载
+offline-collection-clear = 移除离线副本
+confirm-offline-remove-title = 移除离线副本？
+confirm-offline-remove-tracks = { $count ->
+    [one] 移除这 1 首离线歌曲（{ $size }）？
+   *[other] 移除 { $count } 首离线歌曲（{ $size }）？
+}
+confirm-offline-remove-album = 移除专辑「{ $name }」的 { $count } 首离线歌曲（{ $size }）？
+confirm-offline-remove-playlist = 移除歌单「{ $name }」的 { $count } 首离线歌曲（{ $size }）？若这些歌曲也属于其他专辑或歌单，同样会被删除。
+confirm-offline-clear-all-title = 清空全部下载？
+confirm-offline-clear-all = 将永久删除全部 { $count } 首离线歌曲（{ $size }）。此操作无法撤销。
 offline-artist-eyebrow = 已下载的歌手
 offline-artist-albums = 已下载的专辑
 offline-artist-songs = 已下载的歌曲

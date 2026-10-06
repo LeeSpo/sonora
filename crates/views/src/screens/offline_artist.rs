@@ -10,11 +10,12 @@ use i18n::t;
 use music::Track;
 use state::{Offline, OfflineAlbum, Playback};
 use ui::{
-    ActiveTheme as _, Card, Listing as _, Scrollbar, Scroller, TableDelegate, TableEvent,
+    ActiveTheme as _, Button, Card, Listing as _, Scrollbar, Scroller, TableDelegate, TableEvent,
     TableState, Text, runtime, table, vacant,
 };
 
 use crate::shared::album_grid::CardGrid;
+use crate::shared::confirm::Confirm;
 use crate::shared::cells;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::page;
@@ -258,10 +259,14 @@ fn album_card(
         held.then(|| playback.control() == Some(true))
     };
     let count = album.tracks.len();
+    let size = music::offline::format_bytes(album.bytes);
+    let meta = t!("offline-album-meta", count = count, size = size.as_str());
     let toggled = playback.clone();
     let pressed = playback.clone();
     let queued = album.tracks.clone();
     let started = album.tracks;
+    let clear_id = album.id.clone();
+    let clear_name = album.name.clone();
 
     Card::new(
         ("offline-artist-album", index),
@@ -270,9 +275,18 @@ fn album_card(
     .cover(album.cover)
     .fallback("icons/disc-3.svg")
     .weight(FontWeight::SEMIBOLD)
-    .meta(t!("count-songs", count = count))
+    .meta(meta)
     .tile(width)
     .flat()
+    .trailing(
+        Button::new(("clear-offline-artist-album", index))
+            .ghost()
+            .icon("icons/trash-2.svg")
+            .tooltip("offline-clear-album")
+            .on_click(move |_, _, cx| {
+                Confirm::offline_album(clear_id.clone(), clear_name.clone(), cx);
+            }),
+    )
     .play(current == Some(true), move |_, _, cx| {
         toggled.update(cx, |playback, cx| match current {
             Some(_) => playback.toggle_play(cx),

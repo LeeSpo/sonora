@@ -5,7 +5,7 @@ use music::{Album, SavedArtist, Shape, Track};
 use state::{Detail, History, Io, Outcome, Shelf, Sonora, Toasts};
 use ui::{Button, Dismiss, FORM_CONTEXT, Modal, Submit};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum Kind {
     LibrarySongs(usize),
     PlaylistSongs(usize),
@@ -15,6 +15,22 @@ pub(crate) enum Kind {
     Playlists(usize),
     DeleteTrackFiles(usize),
     Widevine,
+    /// Remove several offline copies. `size` is already human-readable (e.g. "3.2 GB").
+    OfflineTracks { count: usize, size: gpui::SharedString },
+    /// Remove every offline copy of one album.
+    OfflineAlbum {
+        name: gpui::SharedString,
+        count: usize,
+        size: gpui::SharedString,
+    },
+    /// Remove every offline copy of one playlist's tracks.
+    OfflinePlaylist {
+        name: gpui::SharedString,
+        count: usize,
+        size: gpui::SharedString,
+    },
+    /// Wipe the whole offline cache.
+    OfflineAll { count: usize, size: gpui::SharedString },
 }
 
 impl Kind {
@@ -24,26 +40,49 @@ impl Kind {
             Self::History(_) => t!("confirm-remove-history-title"),
             Self::DeleteTrackFiles(_) => t!("confirm-delete-track-files-title"),
             Self::Widevine => t!("confirm-uninstall-widevine-title"),
+            Self::OfflineTracks { .. } | Self::OfflineAlbum { .. } | Self::OfflinePlaylist { .. } => {
+                t!("confirm-offline-remove-title")
+            }
+            Self::OfflineAll { .. } => t!("confirm-offline-clear-all-title"),
             _ => t!("confirm-remove-library-title"),
         }
     }
 
     fn detail(&self) -> gpui::SharedString {
-        match *self {
-            Self::LibrarySongs(count) => t!("confirm-remove-songs", count = count),
-            Self::PlaylistSongs(count) => t!("confirm-remove-playlist-songs", count = count),
-            Self::History(count) => t!("confirm-remove-history-songs", count = count),
-            Self::Albums(count) => t!("confirm-remove-albums", count = count),
-            Self::Artists(count) => t!("confirm-remove-artists", count = count),
-            Self::Playlists(count) => t!("confirm-remove-playlists", count = count),
-            Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = count),
+        match self {
+            Self::LibrarySongs(count) => t!("confirm-remove-songs", count = *count),
+            Self::PlaylistSongs(count) => t!("confirm-remove-playlist-songs", count = *count),
+            Self::History(count) => t!("confirm-remove-history-songs", count = *count),
+            Self::Albums(count) => t!("confirm-remove-albums", count = *count),
+            Self::Artists(count) => t!("confirm-remove-artists", count = *count),
+            Self::Playlists(count) => t!("confirm-remove-playlists", count = *count),
+            Self::DeleteTrackFiles(count) => t!("confirm-delete-track-files", count = *count),
             Self::Widevine => t!("confirm-uninstall-widevine"),
+            Self::OfflineTracks { count, size } => {
+                t!("confirm-offline-remove-tracks", count = *count, size = size.as_ref())
+            }
+            Self::OfflineAlbum { name, count, size } => t!(
+                "confirm-offline-remove-album",
+                name = name.as_ref(),
+                count = *count,
+                size = size.as_ref()
+            ),
+            Self::OfflinePlaylist { name, count, size } => t!(
+                "confirm-offline-remove-playlist",
+                name = name.as_ref(),
+                count = *count,
+                size = size.as_ref()
+            ),
+            Self::OfflineAll { count, size } => {
+                t!("confirm-offline-clear-all", count = *count, size = size.as_ref())
+            }
         }
     }
 
     fn action(&self) -> gpui::SharedString {
         match self {
             Self::Widevine => t!("settings-widevine-uninstall"),
+            Self::OfflineAll { .. } => t!("offline-clear-all"),
             _ => t!("common-delete"),
         }
     }
@@ -211,7 +250,117 @@ impl Confirm {
         );
     }
 
-    pub fn delete_track_files(ids: Vec<String>, cx: &mut App) {
+    /// Remove offline copies of `ids`. Confirms when more than one track is involved.
+    pub fn offline_tracks(ids: Vec<String>, cx: &mut App) {
+        if ids.is_empty() {
+            return;
+        }
+        let offline = state::Offline::global(cx);
+        let size = music::offline::format_bytes(offline.read(cx).size_of(&ids));
+        let count = ids.len();
+        let apply = move |cx: &mut App| {
+            state::Offline::global(cx).update(cx, |offline, cx| offline.remove_tracks(ids, cx));
+        };
+        if count == 1 {
+            apply(cx);
+            return;
+        }
+        Self::ask(
+            Kind::OfflineTracks {
+                count,
+                size: size.into(),
+            },
+            apply,
+            cx,
+        );
+    }
+
+    /// Remove every offline copy of one album.
+    pub fn offline_album(
+        album_id: Option<String>,
+        album_name: String,
+        cx: &mut App,
+    ) {
+        let ids = match album_id.as_deref() {
+            Some(id) => music::offline::tracks_for_album(Some(id), &album_name),
+            None => music::offline::tracks_for_album(None, &album_name),
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let size = music::offline::format_bytes(music::offline::size_of(&ids));
+        let count = ids.len();
+        let name = album_name.clone();
+        Self::ask(
+            Kind::OfflineAlbum {
+                name: name.into(),
+                count,
+                size: size.into(),
+            },
+            move |cx| {
+                state::Offline::global(cx).update(cx, |offline, cx| offline.remove_tracks(ids, cx));
+            },
+            cx,
+        );
+    }
+
+    /// Remove the offline copies of every track on a playlist or album detail page.
+    pub fn offline_collection(name: String, ids: Vec<String>, playlist: bool, cx: &mut App) {
+        if ids.is_empty() {
+            return;
+        }
+        let size = music::offline::format_bytes(music::offline::size_of(&ids));
+        let count = ids.len();
+        let kind = if playlist {
+            Kind::OfflinePlaylist {
+                name: name.into(),
+                count,
+                size: size.into(),
+            }
+        } else {
+            Kind::OfflineAlbum {
+                name: name.into(),
+                count,
+                size: size.into(),
+            }
+        };
+        Self::ask(
+            kind,
+            move |cx| {
+                state::Offline::global(cx).update(cx, |offline, cx| offline.remove_tracks(ids, cx));
+            },
+            cx,
+        );
+    }
+
+    /// Wipe every ready offline copy. Stronger wording than a single-album clear.
+    pub fn offline_all(cx: &mut App) {
+        let offline = state::Offline::global(cx);
+        let ids: Vec<String> = offline
+            .read(cx)
+            .tracks()
+            .iter()
+            .filter_map(|track| track.id.clone())
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let usage = offline.read(cx).usage();
+        let size = music::offline::format_bytes(usage.bytes);
+        let count = ids.len();
+        Self::ask(
+            Kind::OfflineAll {
+                count,
+                size: size.into(),
+            },
+            move |cx| {
+                state::Offline::global(cx).update(cx, |offline, cx| offline.remove_tracks(ids, cx));
+            },
+            cx,
+        );
+    }
+
+        pub fn delete_track_files(ids: Vec<String>, cx: &mut App) {
         if ids.is_empty() {
             return;
         }

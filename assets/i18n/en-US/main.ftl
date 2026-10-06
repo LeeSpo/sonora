@@ -266,6 +266,31 @@ menu-retry-offline = Retry offline save
 offline-clear-failed = Clear failed
 offline-collection-save = Save all offline
 offline-collection-saved = All tracks saved offline
+
+offline-albums = Downloaded albums
+offline-songs = Downloaded songs
+offline-album-meta = { $count ->
+    [one] { $count } song · { $size }
+   *[other] { $count } songs · { $size }
+}
+offline-clear-album = Remove offline album
+offline-clear-all = Clear all downloads
+offline-collection-clear = Remove offline copies
+confirm-offline-remove-title = Remove offline copies?
+confirm-offline-remove-tracks = { $count ->
+    [one] Remove this offline copy ({ $size })?
+   *[other] Remove { $count } offline copies ({ $size })?
+}
+confirm-offline-remove-album = Remove { $count ->
+    [one] { $count } offline song
+   *[other] { $count } offline songs
+} from “{ $name }” ({ $size })?
+confirm-offline-remove-playlist = Remove { $count ->
+    [one] { $count } offline song
+   *[other] { $count } offline songs
+} from the playlist “{ $name }” ({ $size })? Songs that also belong to other albums or playlists are removed too.
+confirm-offline-clear-all-title = Clear all downloads?
+confirm-offline-clear-all = Permanently delete all { $count } offline songs ({ $size })? This cannot be undone.
 offline-artist-eyebrow = Downloaded artist
 offline-artist-albums = Downloaded albums
 offline-artist-songs = Downloaded songs
