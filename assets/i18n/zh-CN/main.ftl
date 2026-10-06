@@ -236,6 +236,15 @@ menu-remove-tracks-offline = 移除 { $count } 个离线副本
 offline-clear-failed = 清除失败项
 offline-collection-save = 全部保存到离线
 offline-collection-saved = 已全部保存到离线
+offline-artist-eyebrow = 已下载的歌手
+offline-artist-albums = 已下载的专辑
+offline-artist-songs = 已下载的歌曲
+offline-artist-empty = 这位歌手已经没有已下载的歌曲了。
+offline-artist-album-count =
+    { $count ->
+        [one] { $count } 张专辑
+       *[other] { $count } 张专辑
+    }
 menu-dismiss-offline = 忽略失败的保存
 trouble-offline-downloads = 请检查网络连接。已下载的歌曲仍可播放。
 trouble-go-downloaded = 前往已下载

@@ -27,13 +27,14 @@ use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
     Adaptive, ArtistView, DetailView, FullscreenView, GenreView, HistoryView, HomeView,
-    LibraryView, LoginView, OfflineView, SettingsView, SongView, UserView,
+    LibraryView, LoginView, OfflineArtistView, OfflineView, SettingsView, SongView, UserView,
 };
 
 struct Screens {
     home: Entity<HomeView>,
     history: Entity<HistoryView>,
     offline: Entity<OfflineView>,
+    offline_artist: Entity<OfflineArtistView>,
     library: Entity<LibraryView>,
     local: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
@@ -155,6 +156,25 @@ impl Root {
         })
         .detach();
 
+        // An artist page that just lost the network swaps to the offline artist page when
+        // something of that artist is saved, rather than staying on No connection.
+        let mut was_lost = Network::lost(cx);
+        cx.observe(&Network::global(cx), move |this, _, cx| {
+            let lost = Network::lost(cx);
+            let dropped = lost && !was_lost;
+            was_lost = lost;
+            if !dropped {
+                return;
+            }
+            let Destination::Artist(id) = router::trail(cx).read(cx).current() else {
+                return;
+            };
+            if matches!(offline_artist(&id, cx), ArtistPage::Offline) {
+                this.reload(cx);
+            }
+        })
+        .detach();
+
         let library_view = cx.new(|cx| {
             LibraryView::new(
                 Shelf::Streaming,
@@ -174,6 +194,8 @@ impl Root {
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
         let offline_store = Sonora::global(cx).offline.clone();
+        let offline_artist = cx
+            .new(|cx| OfflineArtistView::new(offline_store.clone(), playback.clone(), window, cx));
         let offline = cx.new(|cx| OfflineView::new(offline_store, playback.clone(), window, cx));
 
         let search_library = library.clone();
@@ -289,6 +311,7 @@ impl Root {
                 home,
                 history,
                 offline,
+                offline_artist,
                 library: library_view,
                 local: local_view,
                 artist: None,
@@ -623,12 +646,19 @@ impl Root {
                     .update(cx, |profile, cx| profile.open(&id, cx));
                 self.screens.user.clone().into()
             }
-            Destination::Artist(id) => {
-                let (artist, detail) = self.artist(cx);
-                detail.update(cx, |artist, cx| artist.open(&id, cx));
-                toolbar = Some(artist.read(cx).toolbar());
-                artist.into()
-            }
+            Destination::Artist(id) => match offline_artist(&id, cx) {
+                ArtistPage::Offline => {
+                    let offline = Sonora::global(cx).offline.clone();
+                    offline.update(cx, |offline, cx| offline.open_artist(&id, cx));
+                    self.screens.offline_artist.clone().into()
+                }
+                ArtistPage::Online(id) => {
+                    let (artist, detail) = self.artist(cx);
+                    detail.update(cx, |artist, cx| artist.open(&id, cx));
+                    toolbar = Some(artist.read(cx).toolbar());
+                    artist.into()
+                }
+            },
             Destination::Genre(id) => {
                 let (genre, detail) = self.genre(cx);
                 detail.update(cx, |detail, cx| detail.open(&id, cx));
@@ -651,6 +681,34 @@ impl Root {
             workspace.set_content(content, header, cx)
         });
         cx.notify();
+    }
+}
+
+/// Which page an artist link opens.
+enum ArtistPage {
+    /// The normal artist page for this server id.
+    Online(SharedString),
+    /// The offline artist page, built from saved tracks alone.
+    Offline,
+}
+
+/// Where an artist link goes. With the network gone, an artist that has saved tracks opens
+/// the offline artist page. A stand-in name id from a track saved before artist ids were kept
+/// opens the real page once a saved track has taught the server id for that name, and the
+/// offline page otherwise.
+fn offline_artist(id: &SharedString, cx: &App) -> ArtistPage {
+    if let Some(name) = music::offline::name_of_artist_id(id) {
+        return match (Network::lost(cx), music::offline::artist_id_for_name(name)) {
+            (false, Some(known)) => ArtistPage::Online(known.into()),
+            _ => ArtistPage::Offline,
+        };
+    }
+    let saved = !music::is_local_id(id)
+        && Network::lost(cx)
+        && Sonora::global(cx).offline.read(cx).has_artist(id);
+    match saved {
+        true => ArtistPage::Offline,
+        false => ArtistPage::Online(id.clone()),
     }
 }
 

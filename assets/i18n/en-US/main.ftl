@@ -266,6 +266,15 @@ menu-retry-offline = Retry offline save
 offline-clear-failed = Clear failed
 offline-collection-save = Save all offline
 offline-collection-saved = All tracks saved offline
+offline-artist-eyebrow = Downloaded artist
+offline-artist-albums = Downloaded albums
+offline-artist-songs = Downloaded songs
+offline-artist-empty = Nothing by this artist is downloaded anymore.
+offline-artist-album-count =
+    { $count ->
+        [one] { $count } album
+       *[other] { $count } albums
+    }
 menu-dismiss-offline = Dismiss failed save
 trouble-offline-downloads = Check your internet connection. Your downloaded tracks still play.
 trouble-go-downloaded = Go to Downloaded
