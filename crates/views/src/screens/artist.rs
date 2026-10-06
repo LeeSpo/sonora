@@ -686,8 +686,9 @@ impl ArtistView {
         )
     }
 
-    /// The recommendation rail under the releases: what the artist guests on. A rail
-    /// still on its way reads as skeletons only while nothing of it is up.
+    /// The recommendation rail under the releases: what the artist guests on. An empty
+    /// list stays off the page entirely, including while the fill is still running, so a
+    /// provider that never answers appears-on never flashes a vacant heading.
     fn recommended(
         &self,
         window: &Window,
@@ -698,53 +699,40 @@ impl ArtistView {
         let card = grid.card;
         let columns = grid.columns.max(1);
         let detail = self.detail.read(cx);
-        let filling = detail.is_filling();
         let appears = detail.appears_on().len();
+        if appears == 0 {
+            return Vec::new();
+        }
 
-        vec![match appears {
-            0 if filling => Some(Rail::pending(
-                t!("artist-appears-on"),
-                card,
+        let opened = self.me.clone();
+        vec![self.rails[0].render(
+            RailSpec {
+                tag: "artist-appears",
+                place: 0,
+                title: t!("artist-appears-on"),
+                count: appears,
+                tile: card,
                 columns,
-                window,
-                cx,
-            )),
-            0 => None,
-            _ => {
-                let opened = self.me.clone();
-                Some(self.rails[0].render(
-                    RailSpec {
-                        tag: "artist-appears",
-                        place: 0,
-                        title: t!("artist-appears-on"),
-                        count: appears,
-                        tile: card,
-                        columns,
-                        tabs: None,
-                    },
-                    window,
-                    cx,
-                    notify,
-                    move |index, _, cx| {
-                        let Some(view) = opened.upgrade() else {
-                            return div().into_any_element();
-                        };
-                        let held = view.read(cx);
-                        let detail = held.detail.read(cx);
-                        let Some(album) = detail.appears_on().get(index) else {
-                            return div().into_any_element();
-                        };
-                        cards::album_card(("artist-appears", index), album, &held.playback, cx)
-                            .tile(card)
-                            .flat()
-                            .into_any_element()
-                    },
-                ))
-            }
-        }]
-        .into_iter()
-        .flatten()
-        .collect()
+                tabs: None,
+            },
+            window,
+            cx,
+            notify,
+            move |index, _, cx| {
+                let Some(view) = opened.upgrade() else {
+                    return div().into_any_element();
+                };
+                let held = view.read(cx);
+                let detail = held.detail.read(cx);
+                let Some(album) = detail.appears_on().get(index) else {
+                    return div().into_any_element();
+                };
+                cards::album_card(("artist-appears", index), album, &held.playback, cx)
+                    .tile(card)
+                    .flat()
+                    .into_any_element()
+            },
+        )]
     }
 
     fn tracks_loading(&self, cx: &Context<Self>) -> AnyElement {
@@ -805,13 +793,18 @@ impl ArtistView {
             .flex()
             .flex_col()
             .gap_2()
-            .child(match self.detail.read(cx).is_loading() {
-                true => self.tracks_loading(cx),
-                false => table(&self.table)
-                    .rounded(theme.radius)
-                    .border_1()
-                    .border_color(theme.border)
-                    .into_any_element(),
+            .child({
+                let detail = self.detail.read(cx);
+                let loading = detail.is_loading()
+                    || (self.popular.is_empty() && detail.is_filling());
+                match loading {
+                    true => self.tracks_loading(cx),
+                    false => table(&self.table)
+                        .rounded(theme.radius)
+                        .border_1()
+                        .border_color(theme.border)
+                        .into_any_element(),
+                }
             })
             .children(more)
             .into_any_element()
@@ -832,6 +825,10 @@ impl ArtistView {
         let playback = self.playback.clone();
         let opened = cx.entity().downgrade();
 
+        let loading = {
+            let detail = self.detail.read(cx);
+            detail.is_loading() || (tracks.is_empty() && detail.is_filling())
+        };
         Picks::new(
             "artist-popular",
             tracks,
@@ -843,7 +840,7 @@ impl ArtistView {
         .eyebrow(i18n::lookup("artist-popular-eyebrow", None))
         .vacancy("artist-popular-empty")
         .detailed()
-        .loading(self.detail.read(cx).is_loading())
+        .loading(loading)
         .on_previous(cx.listener(|this, _, _, cx| {
             this.popular_page = this.popular_page.saturating_sub(1);
             this.track_context = None;
@@ -874,9 +871,15 @@ impl ArtistView {
 
     fn about(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let artist = self.detail.read(cx).artist()?;
+        // No biography means the whole About block stays off the page, rather than a card
+        // with an empty fallback that looks like it failed to load.
+        let biography = artist
+            .biography
+            .clone()
+            .filter(|biography| !biography.trim().is_empty())?;
         let card = AboutArtist::new("artist-about", artist.name.clone())
             .cover(artist.cover_large.clone())
-            .biography(artist.biography.clone())
+            .biography(Some(biography))
             .on_open(cx.listener(|this, _, _, cx| {
                 this.about_open = true;
                 cx.notify();
@@ -1005,9 +1008,19 @@ impl Render for ArtistView {
         let listed = self.mode == Mode::List;
         let release_padding = self.release_padding;
         let head = self.header(cx);
-        let tracks = match self.mode {
-            Mode::Grid => self.popular(cx),
-            Mode::List => self.listed(cx),
+        // Popular stays off the page when the artist has nothing played and the fill is done,
+        // so an empty heading or vacancy block never sits under the hero.
+        let popular_loading = {
+            let detail = self.detail.read(cx);
+            detail.is_loading() || (self.popular.is_empty() && detail.is_filling())
+        };
+        let show_popular = !self.popular.is_empty() || popular_loading;
+        let tracks = match show_popular {
+            true => Some(match self.mode {
+                Mode::Grid => self.popular(cx),
+                Mode::List => self.listed(cx),
+            }),
+            false => None,
         };
         let grid = self.releases(window, cx);
         let about = self.about(cx);
@@ -1027,7 +1040,7 @@ impl Render for ArtistView {
             .pt(inset)
             .pb(inset)
             .on_scroll_wheel(cx.listener(Self::release_scroll))
-            .child(div().child(head).when(listed, |this| {
+            .child(div().child(head).when(listed && show_popular, |this| {
                 this.child(
                     div()
                         .pb_3()
@@ -1036,7 +1049,7 @@ impl Render for ArtistView {
                         .child(t!("artist-popular")),
                 )
             }))
-            .child(tracks)
+            .children(tracks)
             .children(grid)
             .children(rails)
             .children(about)
