@@ -49,6 +49,8 @@ sha2.workspace = true
 serde_norway.workspace = true
 storage.workspace = true
 symphonia.workspace = true
+tempfile.workspace = true
+time.workspace = true
 tokio.workspace = true
 widevine.workspace = true
 ytmusic.workspace = true
@@ -56,3 +58,4 @@ ytmusic.workspace = true
 [dev-dependencies]
 env_logger.workspace = true
 rustls.workspace = true
+time = { workspace = true, features = ["macros"] }
