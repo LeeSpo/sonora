@@ -23,6 +23,7 @@ nav-history = История
 nav-home = Главная
 nav-search = Поиск
 nav-library = Моя медиатека
+nav-favorites = Избранное
 nav-settings = Настройки
 nav-songs = Треки
 nav-albums = Альбомы

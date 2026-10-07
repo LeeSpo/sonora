@@ -23,6 +23,7 @@ nav-history = Geçmiş
 nav-home = Ana sayfa
 nav-search = Ara
 nav-library = Kitaplığın
+nav-favorites = Favoriler
 nav-settings = Ayarlar
 nav-songs = Şarkılar
 nav-albums = Albümler

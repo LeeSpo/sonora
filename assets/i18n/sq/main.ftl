@@ -23,6 +23,7 @@ nav-history = Historiku
 nav-home = Kryefaqja
 nav-search = Kërko
 nav-library = Biblioteka jote
+nav-favorites = Të preferuarat
 nav-settings = Cilësimet
 nav-songs = Këngë
 nav-albums = Albume

@@ -161,6 +161,8 @@ pub(crate) struct TrackSource {
     playback: Entity<Playback>,
     is_liked: Option<Entity<Library>>,
     starrable: Option<Shelf>,
+    /// When set, the list is permanently favorites-only: the flag stays on and is omitted from the funnel.
+    favorites_only: bool,
     album: Option<Entity<Detail>>,
     playlist: Option<Entity<Detail>>,
     history: Option<Entity<History>>,
@@ -207,6 +209,7 @@ impl TrackSource {
             playback,
             is_liked: None,
             starrable: None,
+            favorites_only: false,
             album: None,
             playlist: None,
             history: None,
@@ -272,6 +275,13 @@ impl TrackSource {
     /// favorites. Needs `with_liked`, which supplies the library both ask.
     pub(crate) fn starrable(mut self, shelf: Shelf) -> Self {
         self.starrable = Some(shelf);
+        self
+    }
+
+    /// Locks the favorites filter on for a dedicated Favorites page.
+    pub(crate) fn favorites_only(mut self) -> Self {
+        self.favorites_only = true;
+        self.sieve.favorites = true;
         self
     }
 
@@ -576,7 +586,7 @@ impl TableSource for TrackSource {
                 on: self.sieve.playable,
             }),
         ]);
-        if self.catalog(cx) {
+        if self.catalog(cx) && !self.favorites_only {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
                 label: t!("filter-favorites"),
@@ -600,12 +610,15 @@ impl TableSource for TrackSource {
                 self.sieve.playable = value;
                 true
             }
-            FilterChange::Flag("filter-favorites", value) => {
+            FilterChange::Flag("filter-favorites", value) if !self.favorites_only => {
                 self.sieve.favorites = value;
                 true
             }
             FilterChange::Reset => {
                 self.sieve = Default::default();
+                if self.favorites_only {
+                    self.sieve.favorites = true;
+                }
                 true
             }
             _ => false,
@@ -613,7 +626,12 @@ impl TableSource for TrackSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.sieve.active()
+        // Locked favorites are the page itself, not a funnel narrowing.
+        if self.favorites_only {
+            self.sieve.duration.is_some() || self.sieve.explicit || self.sieve.playable
+        } else {
+            self.sieve.active()
+        }
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {

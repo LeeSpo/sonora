@@ -23,6 +23,7 @@ nav-history = Historie
 nav-home = Domů
 nav-search = Hledat
 nav-library = Tvoje knihovna
+nav-favorites = Oblíbené
 nav-settings = Nastavení
 nav-songs = Skladby
 nav-albums = Alba

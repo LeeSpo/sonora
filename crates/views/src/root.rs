@@ -36,6 +36,7 @@ struct Screens {
     offline: Entity<OfflineView>,
     offline_artist: Entity<OfflineArtistView>,
     library: Entity<LibraryView>,
+    favorites: Entity<LibraryView>,
     local: Entity<LibraryView>,
     artist: Option<Entity<ArtistView>>,
     artist_detail: Option<Entity<ArtistDetail>>,
@@ -133,7 +134,7 @@ impl Root {
                 }
                 if matches!(
                     router::trail(cx).read(cx).current(),
-                    Destination::Library(_)
+                    Destination::Library(_) | Destination::Favorites(_)
                 ) {
                     navigate(Destination::Home, cx);
                 }
@@ -183,6 +184,9 @@ impl Root {
                 window,
                 cx,
             )
+        });
+        let favorites_view = cx.new(|cx| {
+            LibraryView::favorites(library.clone(), playback.clone(), window, cx)
         });
         let local_view = cx.new(|cx| {
             LibraryView::new(Shelf::Local, library.clone(), playback.clone(), window, cx)
@@ -313,6 +317,7 @@ impl Root {
                 offline,
                 offline_artist,
                 library: library_view,
+                favorites: favorites_view,
                 local: local_view,
                 artist: None,
                 artist_detail: None,
@@ -621,6 +626,15 @@ impl Root {
                 let library = self.screens.library.clone();
                 toolbar = Some(library.read(cx).toolbar());
                 library.into()
+            }
+            Destination::Favorites(tab) => {
+                let tab = tab.for_favorites();
+                self.screens
+                    .favorites
+                    .update(cx, |favorites, cx| favorites.select(tab.into(), cx));
+                let favorites = self.screens.favorites.clone();
+                toolbar = Some(favorites.read(cx).toolbar());
+                favorites.into()
             }
             Destination::Album(id) => {
                 let (album, detail) = self.album(cx);

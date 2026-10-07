@@ -23,6 +23,7 @@ nav-history = Historia
 nav-home = Strona główna
 nav-search = Szukaj
 nav-library = Twoja biblioteka
+nav-favorites = Ulubione
 nav-settings = Ustawienia
 nav-songs = Utwory
 nav-albums = Albumy

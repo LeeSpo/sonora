@@ -12,6 +12,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, svg,
 };
 use gpui::{Window, div, px};
+use music::Shape;
 use router::{
     Destination, LibraryTab, NavEntry, Navigation, NavigationEvent, SettingsTab, navigate,
 };
@@ -24,7 +25,7 @@ use crate::shared::menus::{ItemMenu, item_menu};
 /// The one drag list the pinned section keeps, so a pin dropped anywhere in it lands in order.
 const PINS: &str = "sidebar-pins";
 
-const NAV: [(Option<NavEntry>, &str, Destination); 7] = [
+const NAV: [(Option<NavEntry>, &str, Destination); 8] = [
     (Some(NavEntry::Home), "icons/house.svg", Destination::Home),
     (
         Some(NavEntry::Search),
@@ -35,6 +36,11 @@ const NAV: [(Option<NavEntry>, &str, Destination); 7] = [
         Some(NavEntry::Library),
         "icons/library-big.svg",
         Destination::Library(LibraryTab::Songs),
+    ),
+    (
+        Some(NavEntry::Favorites),
+        "icons/heart.svg",
+        Destination::Favorites(LibraryTab::Songs),
     ),
     (
         Some(NavEntry::Local),
@@ -65,6 +71,12 @@ const LIBRARY_TABS: [(&str, LibraryTab); 4] = [
     ("nav-playlists", LibraryTab::Playlists),
 ];
 
+const FAVORITES_TABS: [(&str, LibraryTab); 3] = [
+    ("nav-songs", LibraryTab::Songs),
+    ("nav-albums", LibraryTab::Albums),
+    ("nav-artists", LibraryTab::Artists),
+];
+
 const MIN_WIDTH: Pixels = px(160.);
 const MAX_WIDTH: Pixels = px(400.);
 const HINT_HEIGHT: Pixels = px(42.);
@@ -74,10 +86,11 @@ const PIN_MARK: f32 = 0.7;
 /// The space between two pinned entries, the same as the `gap_1` between the rows above them.
 const ROW_GAP: Pixels = px(4.);
 
-/// The two navigation entries that expand into tabs rather than navigate.
+/// Navigation entries that expand into tabs rather than navigate.
 #[derive(Clone, Copy, PartialEq)]
 enum Group {
     Library,
+    Favorites,
     Local,
 }
 
@@ -85,6 +98,7 @@ impl Group {
     fn of(destination: &Destination) -> Option<Self> {
         match destination {
             Destination::Library(_) => Some(Self::Library),
+            Destination::Favorites(_) => Some(Self::Favorites),
             Destination::Local(_) => Some(Self::Local),
             _ => None,
         }
@@ -101,6 +115,7 @@ pub(crate) struct SidebarLeft {
     cramped: bool,
     forced: Option<bool>,
     library_open: bool,
+    favorites_open: bool,
     local_open: bool,
     pinned_open: bool,
     dropping: bool,
@@ -145,6 +160,7 @@ impl SidebarLeft {
 
         let at = trail.read(cx).current();
         let library_open = matches!(at, Destination::Library(_));
+        let favorites_open = matches!(at, Destination::Favorites(_));
         let local_open = matches!(at, Destination::Local(_));
 
         Self {
@@ -157,6 +173,7 @@ impl SidebarLeft {
             forced: None,
             cramped: false,
             library_open,
+            favorites_open,
             local_open,
             pinned_open,
             dropping: false,
@@ -176,8 +193,9 @@ impl SidebarLeft {
             return;
         }
         self.at = current.clone();
-        let (library, local) = expanded(current);
+        let (library, favorites, local) = expanded(current);
         self.library_open |= library;
+        self.favorites_open |= favorites;
         self.local_open |= local;
     }
 
@@ -284,6 +302,13 @@ impl SidebarLeft {
             if group == Some(Group::Library) && !stocked {
                 continue;
             }
+            // Favorites only on catalog shelves (Navidrome/Subsonic); Saved shelves are already favorites.
+            if entry == &Some(NavEntry::Favorites) {
+                let catalog = self.library.read(cx).shape(Shelf::Streaming) == Shape::Catalog;
+                if !stocked || !catalog {
+                    continue;
+                }
+            }
             rows.push(self.nav(index, cx));
             if let Some(group) = group.filter(|group| self.opened(*group)) {
                 rows.push(self.tabs(group, cx));
@@ -343,6 +368,7 @@ impl SidebarLeft {
     fn opened(&self, group: Group) -> bool {
         match group {
             Group::Library => self.library_open,
+            Group::Favorites => self.favorites_open,
             Group::Local => self.local_open,
         }
     }
@@ -350,6 +376,7 @@ impl SidebarLeft {
     fn flip(&mut self, group: Group) {
         let open = match group {
             Group::Library => &mut self.library_open,
+            Group::Favorites => &mut self.favorites_open,
             Group::Local => &mut self.local_open,
         };
         *open = !*open;
@@ -612,6 +639,15 @@ impl SidebarLeft {
                     .into_iter()
                     .map(|(name, tab_id)| tab(name.into(), name, Destination::Library(tab_id))),
             ),
+            Group::Favorites => Tabs::new().items(FAVORITES_TABS.into_iter().enumerate().map(
+                |(slot, (name, tab_id))| {
+                    tab(
+                        ("favorites-tab", slot).into(),
+                        name,
+                        Destination::Favorites(tab_id),
+                    )
+                },
+            )),
             Group::Local => Tabs::new().items(LIBRARY_TABS.into_iter().enumerate().map(
                 |(slot, (name, tab_id))| {
                     tab(("local-tab", slot).into(), name, Destination::Local(tab_id))
@@ -791,10 +827,11 @@ fn vacancy() -> AnyElement {
         .into_any_element()
 }
 
-/// Which groups the route opens: Your Library and Local Music, in that order.
-fn expanded(current: &Destination) -> (bool, bool) {
+/// Which groups the route opens: Library, Favorites, and Local Music.
+fn expanded(current: &Destination) -> (bool, bool, bool) {
     (
         matches!(current, Destination::Library(_)),
+        matches!(current, Destination::Favorites(_)),
         matches!(current, Destination::Local(_)),
     )
 }
@@ -827,15 +864,19 @@ mod tests {
     fn a_section_expands_only_where_it_leads() {
         assert_eq!(
             expanded(&Destination::Library(LibraryTab::Albums)),
-            (true, false)
+            (true, false, false)
+        );
+        assert_eq!(
+            expanded(&Destination::Favorites(LibraryTab::Albums)),
+            (false, true, false)
         );
         assert_eq!(
             expanded(&Destination::Local(LibraryTab::Albums)),
-            (false, true)
+            (false, false, true)
         );
         assert_eq!(
             expanded(&Destination::Settings(SettingsTab::General)),
-            (false, false)
+            (false, false, false)
         );
     }
 
@@ -851,7 +892,11 @@ mod tests {
         ];
 
         for destination in away {
-            assert_eq!(expanded(&destination), (false, false), "{destination:?}");
+            assert_eq!(
+                expanded(&destination),
+                (false, false, false),
+                "{destination:?}"
+            );
         }
     }
 }

@@ -23,6 +23,7 @@ nav-history = 履歴
 nav-home = ホーム
 nav-search = 検索
 nav-library = ライブラリ
+nav-favorites = お気に入り
 nav-settings = 設定
 nav-songs = 曲
 nav-albums = アルバム

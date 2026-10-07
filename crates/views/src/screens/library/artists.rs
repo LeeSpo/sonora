@@ -52,6 +52,8 @@ pub(super) struct ArtistSource {
     playback: Entity<Playback>,
     shelf: Shelf,
     starred: bool,
+    /// When set, starred stays on and is omitted from the funnel (Favorites page).
+    favorites_only: bool,
 }
 
 impl ArtistSource {
@@ -65,7 +67,14 @@ impl ArtistSource {
             playback,
             shelf,
             starred: false,
+            favorites_only: false,
         }
+    }
+
+    pub(super) fn favorites_only(mut self) -> Self {
+        self.favorites_only = true;
+        self.starred = true;
+        self
     }
 
     fn index_cell(&self, cell: &Cell<ArtistField>, artist: &SavedArtist, cx: &App) -> AnyElement {
@@ -114,7 +123,7 @@ impl TableSource for ArtistSource {
     }
 
     fn filter_axes(&self, cx: &App) -> Vec<Filter> {
-        match self.catalog(cx) {
+        match self.catalog(cx) && !self.favorites_only {
             true => vec![Filter::Flag(FlagAxis {
                 key: "filter-favorites",
                 label: t!("filter-favorites"),
@@ -126,12 +135,12 @@ impl TableSource for ArtistSource {
 
     fn filter(&mut self, change: FilterChange, _cx: &App) -> bool {
         match change {
-            FilterChange::Flag("filter-favorites", value) => {
+            FilterChange::Flag("filter-favorites", value) if !self.favorites_only => {
                 self.starred = value;
                 true
             }
             FilterChange::Reset => {
-                self.starred = false;
+                self.starred = self.favorites_only;
                 true
             }
             _ => false,
@@ -139,7 +148,7 @@ impl TableSource for ArtistSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.starred
+        self.starred && !self.favorites_only
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {

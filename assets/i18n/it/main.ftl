@@ -23,6 +23,7 @@ nav-history = Cronologia
 nav-home = Schermata principale
 nav-search = Cerca
 nav-library = La tua libreria
+nav-favorites = Preferiti
 nav-settings = Impostazioni
 nav-songs = Brani
 nav-albums = Album

@@ -23,6 +23,7 @@ nav-history = Riwayat
 nav-home = Beranda
 nav-search = Cari
 nav-library = Koleksi Anda
+nav-favorites = Favorit
 nav-settings = Pengaturan
 nav-songs = Lagu
 nav-albums = Album

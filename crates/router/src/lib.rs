@@ -16,11 +16,22 @@ pub enum LibraryTab {
     Artists,
 }
 
+impl LibraryTab {
+    /// Favorites has no playlists tab; Playlists collapses to Songs.
+    pub fn for_favorites(self) -> Self {
+        match self {
+            Self::Playlists => Self::Songs,
+            tab => tab,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavEntry {
     Home,
     Search,
     Library,
+    Favorites,
     History,
     Local,
     Offline,
@@ -28,10 +39,11 @@ pub enum NavEntry {
 }
 
 impl NavEntry {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Home,
         Self::Search,
         Self::Library,
+        Self::Favorites,
         Self::History,
         Self::Local,
         Self::Offline,
@@ -43,6 +55,7 @@ impl NavEntry {
             Self::Home => "home",
             Self::Search => "search",
             Self::Library => "library",
+            Self::Favorites => "favorites",
             Self::History => "history",
             Self::Local => "local",
             Self::Offline => "offline",
@@ -55,6 +68,7 @@ impl NavEntry {
             Self::Home => "nav-home",
             Self::Search => "nav-search",
             Self::Library => "nav-library",
+            Self::Favorites => "nav-favorites",
             Self::History => "nav-history",
             Self::Local => "nav-local",
             Self::Offline => "nav-offline",
@@ -213,6 +227,7 @@ pub enum Destination {
     Home,
     History,
     Library(LibraryTab),
+    Favorites(LibraryTab),
     Local(LibraryTab),
     Offline,
     Album(SharedString),
@@ -242,10 +257,16 @@ impl Destination {
     pub fn same_section(&self, other: &Destination) -> bool {
         match (self, other) {
             (Destination::Library(_), Destination::Library(_))
+            | (Destination::Favorites(_), Destination::Favorites(_))
             | (Destination::Local(_), Destination::Local(_))
             | (Destination::Settings(_), Destination::Settings(_)) => true,
             _ => self == other,
         }
+    }
+
+    /// Favorites destination with Playlists coerced to Songs.
+    pub fn favorites(tab: LibraryTab) -> Self {
+        Self::Favorites(tab.for_favorites())
     }
 }
 

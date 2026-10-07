@@ -96,6 +96,8 @@ pub(super) struct AlbumSource {
     shelf: Shelf,
     year_span: Option<(f32, f32)>,
     starred: bool,
+    /// When set, starred stays on and is omitted from the funnel (Favorites page).
+    favorites_only: bool,
     spread: RefCell<Option<Spread>>,
 }
 
@@ -118,8 +120,15 @@ impl AlbumSource {
             shelf,
             year_span: None,
             starred: false,
+            favorites_only: false,
             spread: RefCell::new(None),
         }
+    }
+
+    pub(super) fn favorites_only(mut self) -> Self {
+        self.favorites_only = true;
+        self.starred = true;
+        self
     }
 
     fn index_cell(&self, cell: &Cell<AlbumField>, album: &Album, cx: &App) -> AnyElement {
@@ -218,7 +227,7 @@ impl TableSource for AlbumSource {
                 .clamped(),
             ));
         }
-        if self.catalog(cx) {
+        if self.catalog(cx) && !self.favorites_only {
             axes.push(Filter::Flag(FlagAxis {
                 key: "filter-favorites",
                 label: t!("filter-favorites"),
@@ -234,13 +243,13 @@ impl TableSource for AlbumSource {
                 self.year_span = Some(value);
                 true
             }
-            FilterChange::Flag("filter-favorites", value) => {
+            FilterChange::Flag("filter-favorites", value) if !self.favorites_only => {
                 self.starred = value;
                 true
             }
             FilterChange::Reset => {
                 self.year_span = None;
-                self.starred = false;
+                self.starred = self.favorites_only;
                 true
             }
             _ => false,
@@ -248,7 +257,7 @@ impl TableSource for AlbumSource {
     }
 
     fn filtered(&self, _cx: &App) -> bool {
-        self.year_span.is_some() || self.starred
+        self.year_span.is_some() || (self.starred && !self.favorites_only)
     }
 
     fn playing(&self, row: usize, cx: &App) -> bool {
