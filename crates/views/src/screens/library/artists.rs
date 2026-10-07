@@ -4,7 +4,7 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis};
 use gpui::{AnyElement, App, Entity, SharedString};
 use i18n::t;
 use music::{SavedArtist, Shape};
-use state::{Library, LibraryPart, Origin, Playback, Shelf};
+use state::{Library, LibraryPart, Network, Origin, Playback, Shelf};
 use ui::rank::{ESSENTIAL, HANDY};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
@@ -93,7 +93,11 @@ impl ArtistSource {
     }
 
     fn artists<'a>(&self, cx: &'a App) -> &'a [SavedArtist] {
-        self.library.read(cx).state(self.shelf).artists()
+        let library = self.library.read(cx);
+        match self.favorites_only {
+            true => library.favorite_artists(self.shelf),
+            false => library.state(self.shelf).artists(),
+        }
     }
 
     /// Whether the shelf lists more than the favorites, so a favorites filter has something to do.
@@ -115,7 +119,17 @@ impl TableSource for ArtistSource {
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.at(row, cx).is_some_and(|artist| {
-            if self.starred && !self.library.read(cx).saved_artist(&artist.id) {
+            if self.starred
+                && !self.favorites_only
+                && !self.library.read(cx).saved_artist(&artist.id)
+            {
+                return false;
+            }
+            // Offline Favorites: only artists that open the offline artist page.
+            if self.favorites_only
+                && Network::lost(cx)
+                && !crate::shared::offline_play::artist_cached(&artist.id, cx)
+            {
                 return false;
             }
             holds(&artist.name, query)
@@ -159,9 +173,11 @@ impl TableSource for ArtistSource {
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        self.library
-            .read(cx)
-            .loading(self.shelf, LibraryPart::Artists)
+        let library = self.library.read(cx);
+        match self.favorites_only {
+            true => library.favorites_loading(self.shelf),
+            false => library.loading(self.shelf, LibraryPart::Artists),
+        }
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {
