@@ -177,43 +177,15 @@ impl OfflineView {
 
     fn albums(&self, available: Pixels, cx: &App) -> Option<AnyElement> {
         let theme = *cx.theme();
-        let albums = self.offline.read(cx).albums();
+        let offline = self.offline.read(cx);
+        let albums = offline.albums();
         if albums.is_empty() {
             return None;
         }
         let layout = CardGrid::layout(available);
         let cards = albums.into_iter().enumerate().map(|(index, album)| {
-            let count = album.track_count;
-            let size = music::offline::format_bytes(album.bytes);
-            let meta = t!(
-                "offline-album-meta",
-                count = count,
-                size = size.as_str()
-            );
-            let album_id = album.album_id.clone();
-            let album_name = album.name.clone();
-            let clear_id = album_id.clone();
-            let clear_name = album_name.clone();
-            Card::new(
-                ("offline-album", index),
-                SharedString::from(album.name),
-            )
-            .cover(album.cover)
-            .fallback("icons/disc-3.svg")
-            .weight(FontWeight::SEMIBOLD)
-            .meta(meta)
-            .tile(layout.card)
-            .flat()
-            .trailing(
-                Button::new(("clear-offline-album", index))
-                    .ghost()
-                    .icon("icons/trash-2.svg")
-                    .tooltip("offline-clear-album")
-                    .on_click(move |_, _, cx| {
-                        Confirm::offline_album(clear_id.clone(), clear_name.clone(), cx);
-                    }),
-            )
-            .into_any_element()
+            let tracks = offline.album_tracks(&album);
+            album_card(index, album, tracks, &self.playback, layout.card, cx).into_any_element()
         });
 
         Some(
@@ -286,6 +258,68 @@ impl Render for OfflineView {
 
         div().size_full().child(page)
     }
+}
+
+
+/// A saved album as a card: play / press both queue its offline tracks from disk.
+fn album_card(
+    index: usize,
+    album: music::offline::AlbumGroup,
+    tracks: Vec<Track>,
+    playback: &Entity<Playback>,
+    width: Pixels,
+    cx: &App,
+) -> Card {
+    let current = {
+        let playback = playback.read(cx);
+        let playing = playback.track().and_then(|track| track.id.as_deref());
+        let held = playing.is_some_and(|id| {
+            tracks
+                .iter()
+                .any(|track| track.id.as_deref() == Some(id))
+        });
+        held.then(|| playback.control() == Some(true))
+    };
+    let count = album.track_count;
+    let size = music::offline::format_bytes(album.bytes);
+    let meta = t!("offline-album-meta", count = count, size = size.as_str());
+    let toggled = playback.clone();
+    let pressed = playback.clone();
+    let queued = tracks.clone();
+    let started = tracks;
+    let clear_id = album.album_id.clone();
+    let clear_name = album.name.clone();
+
+    Card::new(
+        ("offline-album", index),
+        SharedString::from(album.name),
+    )
+    .cover(album.cover)
+    .fallback("icons/disc-3.svg")
+    .weight(FontWeight::SEMIBOLD)
+    .meta(meta)
+    .tile(width)
+    .flat()
+    .trailing(
+        Button::new(("clear-offline-album", index))
+            .ghost()
+            .icon("icons/trash-2.svg")
+            .tooltip("offline-clear-album")
+            .on_click(move |_, _, cx| {
+                Confirm::offline_album(clear_id.clone(), clear_name.clone(), cx);
+            }),
+    )
+    .play(current == Some(true), move |_, _, cx| {
+        toggled.update(cx, |playback, cx| match current {
+            Some(_) => playback.toggle_play(cx),
+            None => playback.start_any(queued.clone(), None, cx),
+        });
+    })
+    .press(move |_, _, cx| {
+        pressed.update(cx, |playback, cx| {
+            playback.start(started.clone(), 0, None, cx)
+        });
+    })
 }
 
 impl Searchable for OfflineView {
