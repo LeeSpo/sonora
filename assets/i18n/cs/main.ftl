@@ -912,3 +912,49 @@ toast-tray-unavailable = Systémová lišta není k dispozici, ikonu nelze zobra
 
 # power
 wake-reason = Hraje hudba
+
+# Offline / downloads
+nav-offline = Stažené
+menu-save-offline = Uložit offline
+menu-save-tracks-offline = Uložit offline skladby: { $count }
+menu-remove-offline = Odebrat offline kopii
+menu-remove-tracks-offline = Odebrat offline kopie: { $count }
+offline-empty = Skladby uložené offline se zobrazí zde.
+filter-offline = Filtrovat stažené skladby
+offline-status-saving = Ukládání offline…
+offline-status-failed = Uložení offline selhalo — klikněte pro opakování
+offline-progress = Ukládání { $settled } z { $total }
+offline-failed-count = Selhalo: { $count }
+offline-retry-failed = Opakovat neúspěšné
+menu-retry-offline = Opakovat uložení offline
+offline-clear-failed = Vymazat neúspěšné
+offline-collection-save = Uložit vše offline
+offline-collection-saved = Všechny skladby uloženy offline
+offline-albums = Stažená alba
+offline-songs = Stažené skladby
+offline-album-meta = Skladby: { $count } · { $size }
+offline-clear-album = Odebrat offline album
+offline-clear-all = Vymazat všechna stažení
+offline-collection-clear = Odebrat offline kopie
+confirm-offline-remove-title = Odebrat offline kopie?
+confirm-offline-remove-tracks = Odebrat offline kopie: { $count } ({ $size })?
+confirm-offline-remove-album = Odebrat offline skladby: { $count }?
+confirm-offline-remove-playlist = Odebrat offline skladby: { $count }?
+confirm-offline-clear-all-title = Vymazat všechna stažení?
+confirm-offline-clear-all = Trvale smazat všechny offline skladby ({ $count }, { $size })? Tuto akci nelze vrátit.
+offline-artist-eyebrow = Stažený interpret
+offline-artist-albums = Stažená alba
+offline-artist-songs = Stažené skladby
+offline-artist-empty = Od tohoto interpreta už není nic staženo.
+offline-artist-album-count = Alba: { $count }
+menu-dismiss-offline = Zavřít neúspěšné uložení
+trouble-offline-downloads = Zkontrolujte připojení k internetu. Stažené skladby stále hrají.
+trouble-go-downloaded = Přejít na Stažené
+toast-offline-save-summary = { $failed ->
+    [0] Uloženo offline: { $succeeded }
+   *[other] Uloženo: { $succeeded } / selhalo: { $failed }
+}
+toast-offline-remove-summary = { $failed ->
+    [0] Odebráno: { $succeeded }
+   *[other] Odebráno: { $succeeded } / selhalo: { $failed }
+}

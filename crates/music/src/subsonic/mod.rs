@@ -110,14 +110,17 @@ impl SubsonicProvider {
             &signature,
         )?;
         match client.profile().await {
-            Ok(profile) => Ok(Some(ProviderSession {
-                profile,
-                api: Arc::new(client.clone()),
-                playback: Arc::new(Factory::new(client)),
-                shape: Shape::Catalog,
-                authenticated: true,
-                capabilities: Capabilities::ALL,
-                offline: false,
+            Ok(profile) => Ok(Some({
+                OFFLINE_RESTORED.store(false, std::sync::atomic::Ordering::Relaxed);
+                ProviderSession {
+                    profile,
+                    api: Arc::new(client.clone()),
+                    playback: Arc::new(Factory::new(client)),
+                    shape: Shape::Catalog,
+                    authenticated: true,
+                    capabilities: Capabilities::ALL,
+                    offline: false,
+                }
             })),
             Err(error) if crate::trouble::offline(&format!("{error:#}")) => {
                 // Current pick failed: invalidate and try each remaining address once.
@@ -136,6 +139,7 @@ impl SubsonicProvider {
                     };
                     if let Ok(profile) = fallback.profile().await {
                         log::info!("subsonic: failing over to {address}");
+                        OFFLINE_RESTORED.store(false, std::sync::atomic::Ordering::Relaxed);
                         remembered.server = address;
                         if let Err(store_error) = auth::store(&remembered) {
                             log::warn!(
@@ -154,10 +158,14 @@ impl SubsonicProvider {
                     }
                 }
                 if let Some(session) = Self::offline_cache_session(&remembered, &signature) {
-                    log::warn!(
-                        "subsonic: unreachable; restoring playback from {} offline track(s)",
-                        offline::list().len()
-                    );
+                    if first_offline_restore() {
+                        log::warn!(
+                            "subsonic: unreachable; restoring playback from {} offline track(s)",
+                            offline::list().len()
+                        );
+                    } else {
+                        log::debug!("subsonic: still unreachable; offline playback continues");
+                    }
                     return Ok(Some(session));
                 }
                 Err(error)
@@ -177,6 +185,14 @@ impl SubsonicProvider {
     ) -> Option<ProviderSession> {
         session_from_offline_cache(remembered, signature)
     }
+}
+
+/// Set once the offline-cache session was handed out, so retries that fail again stay quiet.
+/// Cleared whenever the server answers again, so a later outage warns afresh.
+static OFFLINE_RESTORED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn first_offline_restore() -> bool {
+    !OFFLINE_RESTORED.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Build a Subsonic session from stored credentials when offline audio is already on disk.
@@ -281,6 +297,12 @@ impl MusicProvider for SubsonicProvider {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    fn reach_targets(&self) -> Vec<(String, u16)> {
+        auth::load()
+            .map(|remembered| reach_targets(&remembered.addresses()))
+            .unwrap_or_default()
+    }
+
     async fn restore(&self) -> Result<Option<ProviderSession>> {
         Self::restore_stored().await
     }
@@ -312,5 +334,61 @@ impl MusicProvider for SubsonicProvider {
 
     fn sign_out(&self) {
         auth::forget();
+    }
+}
+
+/// `(host, port)` for each configured address, using the URL's own port (or the scheme's
+/// default), without duplicates.
+pub(crate) fn reach_targets(addresses: &[String]) -> Vec<(String, u16)> {
+    let mut targets: Vec<(String, u16)> = Vec::new();
+    for address in addresses {
+        let Ok(url) = reqwest::Url::parse(address) else {
+            continue;
+        };
+        let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
+            continue;
+        };
+        let host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_owned();
+        if !targets.iter().any(|(h, p)| *h == host && *p == port) {
+            targets.push((host, port));
+        }
+    }
+    targets
+}
+
+#[cfg(test)]
+mod reach_tests {
+    use super::{OFFLINE_RESTORED, first_offline_restore, reach_targets};
+
+    #[test]
+    fn offline_restore_warns_only_the_first_time() {
+        OFFLINE_RESTORED.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(first_offline_restore());
+        assert!(!first_offline_restore());
+        assert!(!first_offline_restore());
+        OFFLINE_RESTORED.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(first_offline_restore());
+    }
+
+    #[test]
+    fn uses_each_address_and_its_port() {
+        let urls = vec![
+            "https://music.xyilee.com:9999".to_owned(),
+            "http://192.168.1.5:4533/".to_owned(),
+            "https://plain.example.com".to_owned(),
+            "https://music.xyilee.com:9999/rest".to_owned(),
+            "not a url".to_owned(),
+        ];
+        assert_eq!(
+            reach_targets(&urls),
+            vec![
+                ("music.xyilee.com".to_owned(), 9999),
+                ("192.168.1.5".to_owned(), 4533),
+                ("plain.example.com".to_owned(), 443),
+            ]
+        );
     }
 }

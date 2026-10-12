@@ -99,7 +99,7 @@ pub fn id3v2_end(path: &Path) -> u64 {
     let footer = header[5] & 0x10 != 0;
 
     let skip = u64::from(size) + 10 + if footer { 10 } else { 0 };
-    log::warn!(
+    log::debug!(
         "[local_music] file {} id3v2 bytes skiped: {}",
         path.display(),
         skip
@@ -108,14 +108,50 @@ pub fn id3v2_end(path: &Path) -> u64 {
     skip
 }
 
+/// What an MPEG layer III frame header says about the frame it opens: its size in bytes, and
+/// the size of the largest frame that stream could hold.
+fn mpeg_frame_sizes(header: &[u8]) -> Option<(u64, u64)> {
+    const V1: [u64; 15] = [
+        0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320,
+    ];
+    const V2: [u64; 15] = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
+    let header = u32::from_be_bytes(header.get(..4)?.try_into().ok()?);
+    let (sync, version, layer) = (header >> 21, (header >> 19) & 3, (header >> 17) & 3);
+    if sync != 0x7ff || layer != 1 || version == 1 {
+        return None;
+    }
+    let (bitrate, rate, padding) = ((header >> 12) & 0xf, (header >> 10) & 3, (header >> 9) & 1);
+    if bitrate == 0 || bitrate == 15 || rate == 3 {
+        return None;
+    }
+    let (kbps, rates, bytes_per_kbps_hz, fastest) = match version {
+        3 => (V1[bitrate as usize], [44100, 48000, 32000], 144_000, 320),
+        2 => (V2[bitrate as usize], [22050, 24000, 16000], 72_000, 160),
+        _ => (V2[bitrate as usize], [11025, 12000, 8000], 72_000, 160),
+    };
+    let rate = rates[rate as usize];
+    Some((
+        bytes_per_kbps_hz * kbps / rate + u64::from(padding),
+        bytes_per_kbps_hz * fastest / rate + 1,
+    ))
+}
+
 /// True when the first MPEG frame past `skip` carries a Xing/Info VBR header whose declared
-/// frame count is `0` instead of omitted
+/// frame count cannot be right: `0` instead of omitted, or too small to account for the audio
+/// that follows. symphonia trims the stream to that count when gapless is on, so a file that
+/// lies is cut short; with gapless off the count is ignored and the file plays through.
+///
+/// A count is too small when even the largest frame the stream allows cannot make up the file
+/// from it, or, for a constant bitrate (`Info`) file, when the first frame's size says there
+/// are a fifth more frames than declared.
 pub fn has_lying_xing_frame_count(path: &Path, skip: u64) -> bool {
     use std::io::{Read, Seek, SeekFrom};
 
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
     };
+    let len = file.metadata().map_or(0, |meta| meta.len());
     if skip > 0 && file.seek(SeekFrom::Start(skip)).is_err() {
         return false;
     }
@@ -125,17 +161,33 @@ pub fn has_lying_xing_frame_count(path: &Path, skip: u64) -> bool {
         return false;
     };
     let head = &head[..read];
+    let audio = len.saturating_sub(skip);
+    let sizes = mpeg_frame_sizes(head);
 
     [b"Xing".as_slice(), b"Info".as_slice()]
         .into_iter()
-        .filter_map(|marker| head.windows(4).position(|window| window == marker))
-        .any(|pos| {
+        .filter_map(|marker| {
+            let pos = head.windows(4).position(|window| window == marker)?;
+            Some((pos, marker == b"Info"))
+        })
+        .any(|(pos, constant)| {
             let flags = head.get(pos + 4..pos + 8);
             let has_frame_count = flags.is_some_and(|flags| flags[3] & 0x1 != 0);
             let count = has_frame_count
                 .then(|| head.get(pos + 8..pos + 12))
-                .flatten();
-            count.is_some_and(|bytes| bytes == [0, 0, 0, 0])
+                .flatten()
+                .map(|bytes| {
+                    u64::from(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                });
+            let Some(frames) = count else {
+                return false;
+            };
+            if frames == 0 {
+                return true;
+            }
+            sizes.is_some_and(|(first, largest)| {
+                frames * largest < audio || (constant && frames * first * 6 / 5 < audio)
+            })
         })
 }
 
@@ -796,6 +848,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// An MPEG1 layer III file of `audio` bytes at 128 kbps whose first frame is a `kind`
+    /// ("Xing" or "Info") header declaring `frames`.
+    fn mp3_declaring(dir: &Path, kind: &[u8; 4], frames: u32, audio: usize) -> std::path::PathBuf {
+        let mut bytes = vec![0u8; audio];
+        bytes[..4].copy_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+        bytes[36..40].copy_from_slice(kind);
+        bytes[40..44].copy_from_slice(&[0, 0, 0, 1]);
+        bytes[44..48].copy_from_slice(&frames.to_be_bytes());
+        let path = dir.join(format!("{frames}.mp3"));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_xing_count_that_cannot_fill_the_file_is_lying() {
+        let dir = scratch("sonora-xing-count");
+        // 3 MB at 128 kbps is about 7200 frames
+        assert!(has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Xing", 190, 3_000_000),
+            0
+        ));
+        assert!(has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Info", 0, 3_000_000),
+            0
+        ));
+        // a constant bitrate file is held to its first frame's size, not just the largest one
+        assert!(has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Info", 5000, 3_000_000),
+            0
+        ));
+        assert!(!has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Info", 7176, 3_000_000),
+            0
+        ));
+        assert!(!has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Xing", 7000, 3_000_000),
+            0
+        ));
+        // more frames than the file holds cannot cut it short
+        assert!(!has_lying_xing_frame_count(
+            &mp3_declaring(&dir, b"Xing", 90_000, 3_000_000),
+            0
+        ));
     }
 
     #[test]

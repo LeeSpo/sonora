@@ -726,3 +726,76 @@ nav-pins-alphabetical = Alfabetico
 nav-pins-kind = Per tipo
 nav-show-full-library = Mostra tutta la libreria
 nav-return-top = Torna in alto
+
+# Offline / downloads
+nav-offline = Scaricati
+menu-save-offline = Salva offline
+menu-save-tracks-offline = { $count ->
+    [one] Salva { $count } brano offline
+   *[other] Salva { $count } brani offline
+}
+menu-remove-offline = Rimuovi copia offline
+menu-remove-tracks-offline = { $count ->
+    [one] Rimuovi { $count } copia offline
+   *[other] Rimuovi { $count } copie offline
+}
+offline-empty = I brani salvati offline appariranno qui.
+filter-offline = Filtra brani scaricati
+offline-status-saving = Salvataggio offline…
+offline-status-failed = Salvataggio offline non riuscito — clicca per riprovare
+offline-progress = Salvataggio di { $settled } su { $total }
+offline-failed-count = { $count ->
+    [one] { $count } non riuscito
+   *[other] { $count } non riusciti
+}
+offline-retry-failed = Riprova non riusciti
+menu-retry-offline = Riprova salvataggio offline
+offline-clear-failed = Cancella non riusciti
+offline-collection-save = Salva tutto offline
+offline-collection-saved = Tutti i brani salvati offline
+offline-albums = Album scaricati
+offline-songs = Brani scaricati
+offline-album-meta = { $count ->
+    [one] { $count } brano · { $size }
+   *[other] { $count } brani · { $size }
+}
+offline-clear-album = Rimuovi album offline
+offline-clear-all = Cancella tutti i download
+offline-collection-clear = Rimuovi copie offline
+confirm-offline-remove-title = Rimuovere le copie offline?
+confirm-offline-remove-tracks = { $count ->
+    [one] Rimuovere questa copia offline ({ $size })?
+   *[other] Rimuovere { $count } copie offline ({ $size })?
+}
+confirm-offline-remove-album = { $count ->
+    [one] Rimuovere { $count } brano offline?
+   *[other] Rimuovere { $count } brani offline?
+}
+confirm-offline-remove-playlist = { $count ->
+    [one] Rimuovere { $count } brano offline?
+   *[other] Rimuovere { $count } brani offline?
+}
+confirm-offline-clear-all-title = Cancellare tutti i download?
+confirm-offline-clear-all = Eliminare definitivamente tutti i { $count } brani offline ({ $size })? L’operazione non può essere annullata.
+offline-artist-eyebrow = Artista scaricato
+offline-artist-albums = Album scaricati
+offline-artist-songs = Brani scaricati
+offline-artist-empty = Non c’è più nulla di questo artista scaricato.
+offline-artist-album-count = { $count ->
+    [one] { $count } album
+   *[other] { $count } album
+}
+menu-dismiss-offline = Ignora salvataggio non riuscito
+trouble-offline-downloads = Controlla la connessione a Internet. I brani scaricati continuano a funzionare.
+trouble-go-downloaded = Vai a Scaricati
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } salvati offline
+   *[other] { $succeeded } salvati / { $failed } non riusciti
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } rimossi
+   *[other] { $succeeded } rimossi / { $failed } non riusciti
+}
+trouble-offline = Nessuna connessione
+trouble-offline-detail = Controlla la connessione a Internet e riprova.
+toast-offline = Nessuna connessione. Lo streaming riprenderà quando tornerà.

@@ -416,6 +416,9 @@ pub struct Playback {
     resume_ready: bool,
     /// Whether playback stopped on a stale session and continues once it reconnects.
     awaiting_reconnect: bool,
+    /// The factory the streaming engine was started from, so a repeated SignedIn/Reconnected
+    /// with the same one leaves the running engine alone.
+    factory: Option<Arc<dyn PlaybackFactory>>,
     /// The position last written to settings for resuming.
     stored: Duration,
     sleep: Option<Sleep>,
@@ -437,6 +440,9 @@ impl Playback {
                 let Some(playback) = session.read(cx).playback() else {
                     return;
                 };
+                if !this.needs_engine(&playback, false) {
+                    return;
+                }
                 this.start_engine(playback, cx);
                 this.adopt(cx);
             }
@@ -444,6 +450,9 @@ impl Playback {
                 let Some(playback) = session.read(cx).playback() else {
                     return;
                 };
+                if !this.needs_engine(&playback, this.awaiting_reconnect) {
+                    return;
+                }
                 this.rebind(playback, cx);
             }
             SessionEvent::SignedOut => this.teardown(cx),
@@ -514,6 +523,7 @@ impl Playback {
             intent: Intent::Pause,
             resume_ready: false,
             awaiting_reconnect: false,
+            factory: None,
             stored: Duration::ZERO,
             sleep: None,
             sleep_task: None,
@@ -2151,7 +2161,18 @@ impl Playback {
     }
 
     /// Builds the streaming engine and starts pumping its events.
+    /// Whether a session event offering `playback` must (re)start the streaming engine.
+    fn needs_engine(&self, playback: &Arc<dyn PlaybackFactory>, awaiting: bool) -> bool {
+        needs_engine(
+            self.engine.is_some(),
+            self.factory.as_ref(),
+            playback,
+            awaiting,
+        )
+    }
+
     fn start_engine(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
+        self.factory = Some(playback.clone());
         let config = PlaybackConfig {
             normalisation: self.normalisation,
             gapless: self.gapless,
@@ -2550,7 +2571,66 @@ fn throttle_wait(throttles: u8) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
+
+    use music::{PlaybackConfig, PlaybackEvents, PlaybackFactory, Player};
+
+    use super::needs_engine;
+    use crate::session::{keep_playback_on_sign_in, still_offline};
+
+    /// Counts engine starts; never actually started by these tests.
+    struct Counting(AtomicUsize);
+    impl PlaybackFactory for Counting {
+        fn start(&self, _: PlaybackConfig) -> (Box<dyn Player>, Box<dyn PlaybackEvents>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            unreachable!("the engine must not be restarted")
+        }
+    }
+    fn factory() -> Arc<dyn PlaybackFactory> {
+        Arc::new(Counting(AtomicUsize::new(0)))
+    }
+
+    #[test]
+    fn retry_while_offline_keeps_the_engine() {
+        let cached = factory();
+        // First offline restore installed `cached` and started the engine with it.
+        let (active, installed) = (Some(0), Some(cached.clone()));
+        // Retries fail again: the session keeps what it has and emits nothing.
+        for _ in 0..5 {
+            assert!(still_offline(active, 0, installed.is_some()));
+        }
+        // Even if a SignedIn were seen with the same factory, the player would not restart.
+        assert!(!needs_engine(true, installed.as_ref(), &cached, false));
+    }
+
+    #[test]
+    fn real_reconnect_keeps_playing() {
+        let cached = factory();
+        let online = factory();
+        // Back online on the same provider/account: the session keeps the cached factory.
+        assert!(keep_playback_on_sign_in(false, Some(0), 0));
+        let offered = if keep_playback_on_sign_in(false, Some(0), 0) {
+            cached.clone()
+        } else {
+            online
+        };
+        assert!(!needs_engine(true, Some(&cached), &offered, false));
+    }
+
+    #[test]
+    fn other_accounts_and_failures_still_restart() {
+        let cached = factory();
+        let other = factory();
+        assert!(!keep_playback_on_sign_in(true, Some(0), 0));
+        assert!(!keep_playback_on_sign_in(false, Some(1), 0));
+        assert!(!still_offline(Some(0), 0, false));
+        assert!(needs_engine(true, Some(&cached), &other, false));
+        assert!(needs_engine(false, Some(&cached), &cached, false));
+        assert!(needs_engine(true, None, &cached, false));
+        assert!(needs_engine(true, Some(&cached), &cached, true));
+    }
 
     use super::{LiveClock, gain};
 
@@ -2621,4 +2701,20 @@ mod tests {
             previous = sample;
         }
     }
+}
+
+/// A running engine started from the same factory keeps playing (same track, same position)
+/// unless a track failure is waiting on a reconnect. Anything else needs a fresh engine.
+fn needs_engine(
+    running: bool,
+    bound: Option<&Arc<dyn PlaybackFactory>>,
+    offered: &Arc<dyn PlaybackFactory>,
+    awaiting: bool,
+) -> bool {
+    awaiting || !running || !bound.is_some_and(|bound| same_factory(bound, offered))
+}
+
+/// Compares two factories by allocation only (ignoring vtables, which may differ per crate).
+fn same_factory(a: &Arc<dyn PlaybackFactory>, b: &Arc<dyn PlaybackFactory>) -> bool {
+    std::ptr::eq(Arc::as_ptr(a) as *const (), Arc::as_ptr(b) as *const ())
 }

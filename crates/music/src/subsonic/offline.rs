@@ -287,10 +287,7 @@ fn migrate_covers(dir: &Path, manifest: &Manifest) {
             match fs::read(&legacy) {
                 Ok(bytes) if !bytes.is_empty() => {
                     if let Err(error) = write_cover_bytes(&dest, &bytes) {
-                        log::debug!(
-                            "offline: cannot migrate cover for {}: {error:#}",
-                            entry.id
-                        );
+                        log::debug!("offline: cannot migrate cover for {}: {error:#}", entry.id);
                         continue;
                     }
                 }
@@ -610,6 +607,9 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
         bail!("download cancelled");
     }
     let mut response = response;
+    // What the server says the body is, when it says: a body that ends short of it is a
+    // download that broke without an error, and would play for a few seconds and stop.
+    let expected = response.content_length();
     let mut written: u64 = 0;
     {
         let mut file =
@@ -632,6 +632,12 @@ pub async fn save(track: &Track) -> Result<CachedTrack> {
     if written == 0 {
         let _ = fs::remove_file(&tmp);
         bail!("the server returned an empty file for {id}");
+    }
+    if let Some(expected) = expected
+        && expected != written
+    {
+        let _ = fs::remove_file(&tmp);
+        bail!("the download of {id} ended early: got {written} of {expected} bytes");
     }
     // Re-check after the body is on disk: remove may have raced the write.
     if is_cancelled(id) {
@@ -1133,15 +1139,17 @@ fn albums_of(dir: &Path, manifest: &Manifest) -> Vec<AlbumGroup> {
                     + file_size(&legacy_cover_in(dir, &entry.id))
             }
         };
-        let slot = groups.entry(group_key.clone()).or_insert_with(|| AlbumGroup {
-            album_id: entry.album_id.clone(),
-            name: entry.album.clone(),
-            artists: entry.artists.clone(),
-            cover: cover_url_in(dir, &entry.id, entry.album_id.as_deref()),
-            track_count: 0,
-            bytes: 0,
-            track_ids: Vec::new(),
-        });
+        let slot = groups
+            .entry(group_key.clone())
+            .or_insert_with(|| AlbumGroup {
+                album_id: entry.album_id.clone(),
+                name: entry.album.clone(),
+                artists: entry.artists.clone(),
+                cover: cover_url_in(dir, &entry.id, entry.album_id.as_deref()),
+                track_count: 0,
+                bytes: 0,
+                track_ids: Vec::new(),
+            });
         if slot.cover.is_none() {
             slot.cover = cover_url_in(dir, &entry.id, entry.album_id.as_deref());
         }
@@ -1154,7 +1162,10 @@ fn albums_of(dir: &Path, manifest: &Manifest) -> Vec<AlbumGroup> {
         let seen = latest.entry(group_key).or_insert(entry.saved_at);
         *seen = (*seen).max(entry.saved_at);
     }
-    let mut albums: Vec<_> = groups.into_iter().map(|(key, group)| (latest[&key], group)).collect();
+    let mut albums: Vec<_> = groups
+        .into_iter()
+        .map(|(key, group)| (latest[&key], group))
+        .collect();
     albums.sort_by_key(|(saved, group)| (std::cmp::Reverse(*saved), group.name.to_lowercase()));
     albums.into_iter().map(|(_, group)| group).collect()
 }
@@ -1344,7 +1355,9 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_cache(f: impl FnOnce(&Path)) {
-        let _lock = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _lock = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().expect("tempdir");
         let key = "test-account";
         {
@@ -1403,7 +1416,10 @@ mod tests {
         assert_eq!(format_bytes(500), "500 B");
         assert_eq!(format_bytes(2048), "2 KB");
         assert_eq!(format_bytes(3 * 1024 * 1024), "3.0 MB");
-        assert_eq!(format_bytes((3.2 * 1024.0 * 1024.0 * 1024.0) as u64), "3.2 GB");
+        assert_eq!(
+            format_bytes((3.2 * 1024.0 * 1024.0 * 1024.0) as u64),
+            "3.2 GB"
+        );
     }
 
     #[test]

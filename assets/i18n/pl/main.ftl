@@ -877,3 +877,58 @@ trouble-offline-detail = Sprawdź połączenie z internetem i spróbuj ponownie.
 trouble-not-loaded = Nie udało się wczytać
 trouble-retry = Spróbuj ponownie
 toast-offline = Brak połączenia. Nic nie zostanie odtworzone, dopóki nie wróci.
+
+# Offline / downloads
+nav-offline = Pobrane
+menu-save-offline = Zapisz offline
+menu-save-tracks-offline = { $count ->
+    [one] Zapisz { $count } utwór offline
+   *[other] Zapisz utwory offline: { $count }
+}
+menu-remove-offline = Usuń kopię offline
+menu-remove-tracks-offline = { $count ->
+    [one] Usuń { $count } kopię offline
+   *[other] Usuń kopie offline: { $count }
+}
+offline-empty = Utwory zapisane offline pojawią się tutaj.
+filter-offline = Filtruj pobrane utwory
+offline-status-saving = Zapisywanie offline…
+offline-status-failed = Zapis offline nie powiódł się — kliknij, aby ponowić
+offline-progress = Zapisywanie { $settled } z { $total }
+offline-failed-count = Nieudane: { $count }
+offline-retry-failed = Ponów nieudane
+menu-retry-offline = Ponów zapis offline
+offline-clear-failed = Wyczyść nieudane
+offline-collection-save = Zapisz wszystko offline
+offline-collection-saved = Wszystkie utwory zapisane offline
+offline-albums = Pobrane albumy
+offline-songs = Pobrane utwory
+offline-album-meta = Utwory: { $count } · { $size }
+offline-clear-album = Usuń album offline
+offline-clear-all = Wyczyść wszystkie pobrane
+offline-collection-clear = Usuń kopie offline
+confirm-offline-remove-title = Usunąć kopie offline?
+confirm-offline-remove-tracks = { $count ->
+    [one] Usunąć tę kopię offline ({ $size })?
+   *[other] Usunąć kopie offline: { $count } ({ $size })?
+}
+confirm-offline-remove-album = Usunąć utwory offline: { $count }?
+confirm-offline-remove-playlist = Usunąć utwory offline: { $count }?
+confirm-offline-clear-all-title = Wyczyścić wszystkie pobrane?
+confirm-offline-clear-all = Trwale usunąć wszystkie utwory offline: { $count } ({ $size })? Tej operacji nie można cofnąć.
+offline-artist-eyebrow = Pobrany wykonawca
+offline-artist-albums = Pobrane albumy
+offline-artist-songs = Pobrane utwory
+offline-artist-empty = Nic od tego wykonawcy nie jest już pobrane.
+offline-artist-album-count = Albumy: { $count }
+menu-dismiss-offline = Odrzuć nieudany zapis
+trouble-offline-downloads = Sprawdź połączenie z internetem. Pobrane utwory nadal grają.
+trouble-go-downloaded = Przejdź do Pobranych
+toast-offline-save-summary = { $failed ->
+    [0] Zapisano offline: { $succeeded }
+   *[other] Zapisano: { $succeeded } / nieudane: { $failed }
+}
+toast-offline-remove-summary = { $failed ->
+    [0] Usunięto: { $succeeded }
+   *[other] Usunięto: { $succeeded } / nieudane: { $failed }
+}

@@ -76,13 +76,25 @@ pub fn set(language: Language) {
     ACTIVE.store(language as usize, Ordering::Relaxed);
 }
 
+/// Whether this is the first time `key` was found missing for `language`, so a missing key is
+/// warned about once per run instead of on every frame that renders it.
+fn first_miss(language: Language, key: &str) -> bool {
+    static MISSED: OnceLock<std::sync::Mutex<std::collections::HashSet<(usize, String)>>> =
+        OnceLock::new();
+    let missed = MISSED.get_or_init(Default::default);
+    let mut missed = missed.lock().unwrap_or_else(|poison| poison.into_inner());
+    missed.insert((language as usize, key.to_owned()))
+}
+
 pub fn lookup(key: &str, args: Option<&FluentArgs>) -> SharedString {
     let active = language();
     if let Some(text) = format(active, key, args) {
         return text;
     }
 
-    log::warn!("i18n: {key} is missing from {}", active.id());
+    if first_miss(active, key) {
+        log::warn!("i18n: {key} is missing from {}", active.id());
+    }
     if active != Language::English
         && let Some(text) = format(Language::English, key, args)
     {

@@ -2,11 +2,11 @@ mod client;
 mod id3;
 mod index;
 mod lyrics;
-mod playback;
+pub(crate) mod playback;
 mod scan;
 mod store;
 pub(crate) mod tags;
-mod wire;
+pub(crate) mod wire;
 
 pub use lyrics::LocalLyrics;
 

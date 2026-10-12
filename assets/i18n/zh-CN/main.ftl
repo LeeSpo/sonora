@@ -780,3 +780,8 @@ nav-pins-alphabetical = 按字母顺序
 nav-pins-kind = 按类型
 nav-show-full-library = 显示完整音乐库
 nav-return-top = 返回顶部
+
+# Offline / downloads
+trouble-offline = 无网络连接
+trouble-offline-detail = 请检查网络连接后重试。
+toast-offline = 无网络连接。恢复连接前无法串流播放。

@@ -362,8 +362,11 @@ impl Session {
 
     /// The host to try when checking whether the network is back. It is the active provider's
     /// own, so the check never touches a service the app is not already using.
-    pub fn reach(&self) -> Option<String> {
-        self.providers.get(self.active?)?.reach()
+    pub fn reach(&self) -> Vec<(String, u16)> {
+        self.active
+            .and_then(|index| self.providers.get(index))
+            .map(|provider| provider.reach_targets())
+            .unwrap_or_default()
     }
 
     pub fn local_slug(&self) -> &'static str {
@@ -705,12 +708,23 @@ impl Session {
     /// Cold-start when the server is unreachable but offline audio is on disk: install the
     /// Subsonic playback engine, stay [`SessionState::Offline`] so restore retries when the
     /// network returns, and emit SignedIn so the player binds the engine.
-    fn carry_on_offline(
-        &mut self,
-        session: ProviderSession,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
+    fn carry_on_offline(&mut self, session: ProviderSession, index: usize, cx: &mut Context<Self>) {
+        let failure = Failure {
+            problem: Some(music::SignInProblem::Network),
+            summary: "the provider could not be reached".into(),
+            detail: None,
+        };
+        // A retry that failed again while cached playback is already running: keep the engine,
+        // the queue and the position exactly as they are. Re-installing the session and emitting
+        // SignedIn here is what used to restart the current track every few seconds.
+        if still_offline(self.active, index, self.playback.is_some()) {
+            log::debug!("session: still offline, leaving cached playback alone");
+            self.awaiting = None;
+            Network::failed(&failure.summary, cx);
+            self.state = SessionState::Offline(failure);
+            cx.notify();
+            return;
+        }
         self.active = Some(index);
         self.awaiting = None;
         self.error = None;
@@ -719,11 +733,6 @@ impl Session {
             settings.set_provider(slug, cx);
         });
         self.install_provider_session(session, cx);
-        let failure = Failure {
-            problem: Some(music::SignInProblem::Network),
-            summary: "the provider could not be reached".into(),
-            detail: None,
-        };
         log::warn!("session: carrying on offline with cached Subsonic playback");
         Network::failed(&failure.summary, cx);
         self.state = SessionState::Offline(failure);
@@ -748,7 +757,15 @@ impl Session {
             settings.set_provider(slug, cx);
         });
         let profile = session.profile.clone();
+        // Back online after running from the offline cache: the cached engine keeps playing.
+        // Its factory is kept so the player sees the same engine source and does not restart.
+        let kept = keep_playback_on_sign_in(replaced, self.active, index)
+            .then(|| self.playback.clone())
+            .flatten();
         self.install_provider_session(session, cx);
+        if let Some(kept) = kept {
+            self.playback = Some(kept);
+        }
         self.state = SessionState::SignedIn(profile);
         self.attempt = 0;
         self.start_heartbeat(cx);
@@ -1011,4 +1028,20 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     let a = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
     let b = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
     a == b || a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// A failed retry while cached playback for the same provider is already installed: nothing
+/// about playback may change.
+pub(crate) fn still_offline(active: Option<usize>, index: usize, has_playback: bool) -> bool {
+    active == Some(index) && has_playback
+}
+
+/// Coming back online on the same provider and account keeps the playback factory already in
+/// use, so the player does not restart the current track.
+pub(crate) fn keep_playback_on_sign_in(
+    replaced: bool,
+    active: Option<usize>,
+    index: usize,
+) -> bool {
+    !replaced && active == Some(index)
 }
