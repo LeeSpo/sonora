@@ -685,3 +685,52 @@ nav-pins-alphabetical = 名前順
 nav-pins-kind = 種類別
 nav-show-full-library = ライブラリ全体を表示
 nav-return-top = 先頭に戻る
+
+# Offline / downloads
+nav-offline = ダウンロード済み
+menu-save-offline = オフラインに保存
+menu-save-tracks-offline = { $count } 曲をオフラインに保存
+menu-remove-offline = オフラインコピーを削除
+menu-remove-tracks-offline = { $count } 件のオフラインコピーを削除
+offline-empty = オフラインに保存した曲がここに表示されます。
+filter-offline = ダウンロード済みの曲を絞り込む
+offline-status-saving = オフラインに保存中…
+offline-status-failed = オフライン保存に失敗しました — クリックして再試行
+offline-progress = { $total } 件中 { $settled } 件を保存中
+offline-failed-count = { $count } 件失敗
+offline-retry-failed = 失敗した項目を再試行
+menu-retry-offline = オフライン保存を再試行
+offline-clear-failed = 失敗した項目を消去
+offline-collection-save = すべてオフラインに保存
+offline-collection-saved = すべての曲をオフラインに保存済み
+offline-albums = ダウンロード済みのアルバム
+offline-songs = ダウンロード済みの曲
+offline-album-meta = { $count } 曲 · { $size }
+offline-clear-album = オフラインのアルバムを削除
+offline-clear-all = すべてのダウンロードを消去
+offline-collection-clear = オフラインコピーを削除
+confirm-offline-remove-title = オフラインコピーを削除しますか？
+confirm-offline-remove-tracks = { $count } 件のオフラインコピー（{ $size }）を削除しますか？
+confirm-offline-remove-album = オフラインの { $count } 曲を削除しますか？
+confirm-offline-remove-playlist = オフラインの { $count } 曲を削除しますか？
+confirm-offline-clear-all-title = すべてのダウンロードを消去しますか？
+confirm-offline-clear-all = オフラインの全 { $count } 曲（{ $size }）を完全に削除しますか？この操作は元に戻せません。
+offline-artist-eyebrow = ダウンロード済みのアーティスト
+offline-artist-albums = ダウンロード済みのアルバム
+offline-artist-songs = ダウンロード済みの曲
+offline-artist-empty = このアーティストのダウンロード済みの項目はもうありません。
+offline-artist-album-count = { $count } 枚のアルバム
+menu-dismiss-offline = 失敗した保存を閉じる
+trouble-offline-downloads = インターネット接続を確認してください。ダウンロード済みの曲は引き続き再生できます。
+trouble-go-downloaded = ダウンロード済みへ移動
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } 件をオフラインに保存
+   *[other] { $succeeded } 件保存 / { $failed } 件失敗
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } 件を削除
+   *[other] { $succeeded } 件削除 / { $failed } 件失敗
+}
+trouble-offline = 接続がありません
+trouble-offline-detail = インターネット接続を確認して、もう一度お試しください。
+toast-offline = 接続がありません。接続が戻るまでストリーミングできません。

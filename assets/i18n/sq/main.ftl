@@ -851,3 +851,58 @@ trouble-offline-detail = Kontrollo lidhjen e internetit dhe provo përsëri.
 trouble-not-loaded = Nuk mund të ngarkohej
 trouble-retry = Provo përsëri
 toast-offline = Pa lidhje. Asgjë nuk do të transmetohet derisa të kthehet.
+
+# Offline / downloads
+nav-offline = Të shkarkuara
+menu-save-offline = Ruaj jashtë linje
+menu-save-tracks-offline = { $count ->
+    [one] Ruaj { $count } këngë jashtë linje
+   *[other] Ruaj { $count } këngë jashtë linje
+}
+menu-remove-offline = Hiq kopjen jashtë linje
+menu-remove-tracks-offline = { $count ->
+    [one] Hiq { $count } kopje jashtë linje
+   *[other] Hiq { $count } kopje jashtë linje
+}
+offline-empty = Këngët që ruan jashtë linje do të shfaqen këtu.
+filter-offline = Filtro këngët e shkarkuara
+offline-status-saving = Po ruhet jashtë linje…
+offline-status-failed = Ruajtja jashtë linje dështoi — kliko për ta riprovuar
+offline-progress = Po ruhen { $settled } nga { $total }
+offline-failed-count = { $count } dështuan
+offline-retry-failed = Riprovo të dështuarat
+menu-retry-offline = Riprovo ruajtjen jashtë linje
+offline-clear-failed = Pastro të dështuarat
+offline-collection-save = Ruaji të gjitha jashtë linje
+offline-collection-saved = Të gjitha këngët u ruajtën jashtë linje
+offline-albums = Albume të shkarkuara
+offline-songs = Këngë të shkarkuara
+offline-album-meta = { $count } këngë · { $size }
+offline-clear-album = Hiq albumin jashtë linje
+offline-clear-all = Pastro të gjitha shkarkimet
+offline-collection-clear = Hiq kopjet jashtë linje
+confirm-offline-remove-title = Të hiqen kopjet jashtë linje?
+confirm-offline-remove-tracks = Të hiqen { $count } kopje jashtë linje ({ $size })?
+confirm-offline-remove-album = Të hiqen { $count } këngë jashtë linje?
+confirm-offline-remove-playlist = Të hiqen { $count } këngë jashtë linje?
+confirm-offline-clear-all-title = Të pastrohen të gjitha shkarkimet?
+confirm-offline-clear-all = Të fshihen përgjithmonë të { $count } këngët jashtë linje ({ $size })? Ky veprim nuk zhbëhet.
+offline-artist-eyebrow = Artist i shkarkuar
+offline-artist-albums = Albume të shkarkuara
+offline-artist-songs = Këngë të shkarkuara
+offline-artist-empty = Nuk ka më asgjë të shkarkuar nga ky artist.
+offline-artist-album-count = { $count ->
+    [one] { $count } album
+   *[other] { $count } albume
+}
+menu-dismiss-offline = Hiq ruajtjen e dështuar
+trouble-offline-downloads = Kontrollo lidhjen me internetin. Këngët e shkarkuara vazhdojnë të luhen.
+trouble-go-downloaded = Shko te Të shkarkuarat
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } u ruajtën jashtë linje
+   *[other] { $succeeded } u ruajtën / { $failed } dështuan
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } u hoqën
+   *[other] { $succeeded } u hoqën / { $failed } dështuan
+}

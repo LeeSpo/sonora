@@ -750,3 +750,73 @@ nav-pins-alphabetical = Alphabetisch
 nav-pins-kind = Nach Typ
 nav-show-full-library = Ganze Bibliothek zeigen
 nav-return-top = Nach oben
+
+# Offline / downloads
+nav-offline = Heruntergeladen
+menu-save-offline = Offline speichern
+menu-save-tracks-offline = { $count ->
+    [one] { $count } Titel offline speichern
+   *[other] { $count } Titel offline speichern
+}
+menu-remove-offline = Offline-Kopie entfernen
+menu-remove-tracks-offline = { $count ->
+    [one] { $count } Offline-Kopie entfernen
+   *[other] { $count } Offline-Kopien entfernen
+}
+offline-empty = Offline gespeicherte Titel erscheinen hier.
+filter-offline = Heruntergeladene Titel filtern
+offline-status-saving = Wird offline gespeichert…
+offline-status-failed = Offline-Speichern fehlgeschlagen — zum Wiederholen klicken
+offline-progress = { $settled } von { $total } wird gespeichert
+offline-failed-count = { $count } fehlgeschlagen
+offline-retry-failed = Fehlgeschlagene wiederholen
+menu-retry-offline = Offline-Speichern wiederholen
+offline-clear-failed = Fehlgeschlagene entfernen
+offline-collection-save = Alle offline speichern
+offline-collection-saved = Alle Titel offline gespeichert
+offline-albums = Heruntergeladene Alben
+offline-songs = Heruntergeladene Titel
+offline-album-meta = { $count ->
+    [one] { $count } Titel · { $size }
+   *[other] { $count } Titel · { $size }
+}
+offline-clear-album = Offline-Album entfernen
+offline-clear-all = Alle Downloads löschen
+offline-collection-clear = Offline-Kopien entfernen
+confirm-offline-remove-title = Offline-Kopien entfernen?
+confirm-offline-remove-tracks = { $count ->
+    [one] Diese Offline-Kopie ({ $size }) entfernen?
+   *[other] { $count } Offline-Kopien ({ $size }) entfernen?
+}
+confirm-offline-remove-album = { $count ->
+    [one] { $count } Offline-Titel entfernen?
+   *[other] { $count } Offline-Titel entfernen?
+}
+confirm-offline-remove-playlist = { $count ->
+    [one] { $count } Offline-Titel entfernen?
+   *[other] { $count } Offline-Titel entfernen?
+}
+confirm-offline-clear-all-title = Alle Downloads löschen?
+confirm-offline-clear-all = Alle { $count } Offline-Titel ({ $size }) dauerhaft löschen? Dies kann nicht rückgängig gemacht werden.
+offline-artist-eyebrow = Heruntergeladener Künstler
+offline-artist-albums = Heruntergeladene Alben
+offline-artist-songs = Heruntergeladene Titel
+offline-artist-empty = Von diesem Künstler ist nichts mehr heruntergeladen.
+offline-artist-album-count = { $count ->
+    [one] { $count } Album
+   *[other] { $count } Alben
+}
+menu-dismiss-offline = Fehlgeschlagenes Speichern verwerfen
+trouble-offline-downloads = Prüfe deine Internetverbindung. Heruntergeladene Titel spielen weiter.
+trouble-go-downloaded = Zu Heruntergeladen
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } offline gespeichert
+   *[other] { $succeeded } gespeichert / { $failed } fehlgeschlagen
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } entfernt
+   *[other] { $succeeded } entfernt / { $failed } fehlgeschlagen
+}
+trouble-offline = Keine Verbindung
+trouble-offline-detail = Prüfe deine Internetverbindung und versuche es erneut.
+toast-offline = Keine Verbindung. Bis sie zurück ist, wird nichts gestreamt.

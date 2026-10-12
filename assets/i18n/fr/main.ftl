@@ -885,3 +885,73 @@ toast-offline = Pas de connexion. Aucune lecture en streaming tant qu'elle n'est
 toast-settings-broken = Corrigez la ligne { $name } de settings.json pour enregistrer les modifications
 toast-tray-unavailable = Il n'y a pas de zone de notification où placer l'icône
 wake-reason = Musique en cours de lecture
+
+# Offline / downloads
+nav-offline = Téléchargés
+menu-save-offline = Enregistrer hors ligne
+menu-save-tracks-offline = { $count ->
+    [one] Enregistrer { $count } titre hors ligne
+   *[other] Enregistrer { $count } titres hors ligne
+}
+menu-remove-offline = Supprimer la copie hors ligne
+menu-remove-tracks-offline = { $count ->
+    [one] Supprimer { $count } copie hors ligne
+   *[other] Supprimer { $count } copies hors ligne
+}
+offline-empty = Les titres enregistrés hors ligne apparaîtront ici.
+filter-offline = Filtrer les titres téléchargés
+offline-status-saving = Enregistrement hors ligne…
+offline-status-failed = Échec de l’enregistrement hors ligne — cliquez pour réessayer
+offline-progress = Enregistrement de { $settled } sur { $total }
+offline-failed-count = { $count ->
+    [one] { $count } échec
+   *[other] { $count } échecs
+}
+offline-retry-failed = Réessayer les échecs
+menu-retry-offline = Réessayer l’enregistrement hors ligne
+offline-clear-failed = Effacer les échecs
+offline-collection-save = Tout enregistrer hors ligne
+offline-collection-saved = Tous les titres sont enregistrés hors ligne
+offline-albums = Albums téléchargés
+offline-songs = Titres téléchargés
+offline-album-meta = { $count ->
+    [one] { $count } titre · { $size }
+   *[other] { $count } titres · { $size }
+}
+offline-clear-album = Supprimer l’album hors ligne
+offline-clear-all = Effacer tous les téléchargements
+offline-collection-clear = Supprimer les copies hors ligne
+confirm-offline-remove-title = Supprimer les copies hors ligne ?
+confirm-offline-remove-tracks = { $count ->
+    [one] Supprimer cette copie hors ligne ({ $size }) ?
+   *[other] Supprimer { $count } copies hors ligne ({ $size }) ?
+}
+confirm-offline-remove-album = { $count ->
+    [one] Supprimer { $count } titre hors ligne ?
+   *[other] Supprimer { $count } titres hors ligne ?
+}
+confirm-offline-remove-playlist = { $count ->
+    [one] Supprimer { $count } titre hors ligne ?
+   *[other] Supprimer { $count } titres hors ligne ?
+}
+confirm-offline-clear-all-title = Effacer tous les téléchargements ?
+confirm-offline-clear-all = Supprimer définitivement les { $count } titres hors ligne ({ $size }) ? Cette action est irréversible.
+offline-artist-eyebrow = Artiste téléchargé
+offline-artist-albums = Albums téléchargés
+offline-artist-songs = Titres téléchargés
+offline-artist-empty = Plus rien de cet artiste n’est téléchargé.
+offline-artist-album-count = { $count ->
+    [one] { $count } album
+   *[other] { $count } albums
+}
+menu-dismiss-offline = Ignorer l’échec
+trouble-offline-downloads = Vérifiez votre connexion Internet. Vos titres téléchargés restent lisibles.
+trouble-go-downloaded = Aller aux téléchargés
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } enregistrés hors ligne
+   *[other] { $succeeded } enregistrés / { $failed } échecs
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } supprimés
+   *[other] { $succeeded } supprimés / { $failed } échecs
+}

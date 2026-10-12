@@ -708,12 +708,7 @@ impl Session {
     /// Cold-start when the server is unreachable but offline audio is on disk: install the
     /// Subsonic playback engine, stay [`SessionState::Offline`] so restore retries when the
     /// network returns, and emit SignedIn so the player binds the engine.
-    fn carry_on_offline(
-        &mut self,
-        session: ProviderSession,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
+    fn carry_on_offline(&mut self, session: ProviderSession, index: usize, cx: &mut Context<Self>) {
         let failure = Failure {
             problem: Some(music::SignInProblem::Network),
             summary: "the provider could not be reached".into(),
@@ -722,7 +717,7 @@ impl Session {
         // A retry that failed again while cached playback is already running: keep the engine,
         // the queue and the position exactly as they are. Re-installing the session and emitting
         // SignedIn here is what used to restart the current track every few seconds.
-        if self.active == Some(index) && self.playback.is_some() {
+        if still_offline(self.active, index, self.playback.is_some()) {
             log::debug!("session: still offline, leaving cached playback alone");
             self.awaiting = None;
             Network::failed(&failure.summary, cx);
@@ -764,7 +759,7 @@ impl Session {
         let profile = session.profile.clone();
         // Back online after running from the offline cache: the cached engine keeps playing.
         // Its factory is kept so the player sees the same engine source and does not restart.
-        let kept = (!replaced && self.active == Some(index))
+        let kept = keep_playback_on_sign_in(replaced, self.active, index)
             .then(|| self.playback.clone())
             .flatten();
         self.install_provider_session(session, cx);
@@ -1033,4 +1028,20 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     let a = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
     let b = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
     a == b || a.starts_with(&b) || b.starts_with(&a)
+}
+
+/// A failed retry while cached playback for the same provider is already installed: nothing
+/// about playback may change.
+pub(crate) fn still_offline(active: Option<usize>, index: usize, has_playback: bool) -> bool {
+    active == Some(index) && has_playback
+}
+
+/// Coming back online on the same provider and account keeps the playback factory already in
+/// use, so the player does not restart the current track.
+pub(crate) fn keep_playback_on_sign_in(
+    replaced: bool,
+    active: Option<usize>,
+    index: usize,
+) -> bool {
+    !replaced && active == Some(index)
 }

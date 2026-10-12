@@ -875,3 +875,49 @@ trouble-offline-detail = Проверьте подключение к интер
 trouble-not-loaded = Не удалось загрузить
 trouble-retry = Повторить
 toast-offline = Нет соединения. Ничего не будет воспроизводиться, пока оно не вернётся.
+
+# Offline / downloads
+nav-offline = Загруженное
+menu-save-offline = Сохранить офлайн
+menu-save-tracks-offline = Сохранить офлайн треков: { $count }
+menu-remove-offline = Удалить офлайн-копию
+menu-remove-tracks-offline = Удалить офлайн-копий: { $count }
+offline-empty = Здесь появятся треки, сохранённые офлайн.
+filter-offline = Фильтр загруженных треков
+offline-status-saving = Сохранение офлайн…
+offline-status-failed = Не удалось сохранить офлайн — нажмите, чтобы повторить
+offline-progress = Сохранение { $settled } из { $total }
+offline-failed-count = Ошибок: { $count }
+offline-retry-failed = Повторить неудачные
+menu-retry-offline = Повторить сохранение офлайн
+offline-clear-failed = Очистить неудачные
+offline-collection-save = Сохранить всё офлайн
+offline-collection-saved = Все треки сохранены офлайн
+offline-albums = Загруженные альбомы
+offline-songs = Загруженные песни
+offline-album-meta = Песен: { $count } · { $size }
+offline-clear-album = Удалить офлайн-альбом
+offline-clear-all = Очистить все загрузки
+offline-collection-clear = Удалить офлайн-копии
+confirm-offline-remove-title = Удалить офлайн-копии?
+confirm-offline-remove-tracks = Удалить офлайн-копий: { $count } ({ $size })?
+confirm-offline-remove-album = Удалить офлайн-песен: { $count }?
+confirm-offline-remove-playlist = Удалить офлайн-песен: { $count }?
+confirm-offline-clear-all-title = Очистить все загрузки?
+confirm-offline-clear-all = Безвозвратно удалить все офлайн-песни ({ $count }, { $size })? Это действие нельзя отменить.
+offline-artist-eyebrow = Загруженный исполнитель
+offline-artist-albums = Загруженные альбомы
+offline-artist-songs = Загруженные песни
+offline-artist-empty = Ничего от этого исполнителя больше не загружено.
+offline-artist-album-count = Альбомов: { $count }
+menu-dismiss-offline = Скрыть неудачное сохранение
+trouble-offline-downloads = Проверьте подключение к интернету. Загруженные треки по-прежнему воспроизводятся.
+trouble-go-downloaded = Перейти к загруженному
+toast-offline-save-summary = { $failed ->
+    [0] Сохранено офлайн: { $succeeded }
+   *[other] Сохранено: { $succeeded } / ошибок: { $failed }
+}
+toast-offline-remove-summary = { $failed ->
+    [0] Удалено: { $succeeded }
+   *[other] Удалено: { $succeeded } / ошибок: { $failed }
+}

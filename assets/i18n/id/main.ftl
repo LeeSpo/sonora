@@ -728,3 +728,52 @@ nav-pins-alphabetical = Berdasarkan abjad
 nav-pins-kind = Berdasarkan jenis
 nav-show-full-library = Tampilkan seluruh koleksi
 nav-return-top = Kembali ke atas
+
+# Offline / downloads
+nav-offline = Diunduh
+menu-save-offline = Simpan offline
+menu-save-tracks-offline = Simpan { $count } lagu offline
+menu-remove-offline = Hapus salinan offline
+menu-remove-tracks-offline = Hapus { $count } salinan offline
+offline-empty = Lagu yang Anda simpan offline akan muncul di sini.
+filter-offline = Saring lagu yang diunduh
+offline-status-saving = Menyimpan offline…
+offline-status-failed = Gagal menyimpan offline — klik untuk mencoba lagi
+offline-progress = Menyimpan { $settled } dari { $total }
+offline-failed-count = { $count } gagal
+offline-retry-failed = Coba lagi yang gagal
+menu-retry-offline = Coba simpan offline lagi
+offline-clear-failed = Hapus yang gagal
+offline-collection-save = Simpan semua offline
+offline-collection-saved = Semua lagu tersimpan offline
+offline-albums = Album yang diunduh
+offline-songs = Lagu yang diunduh
+offline-album-meta = { $count } lagu · { $size }
+offline-clear-album = Hapus album offline
+offline-clear-all = Hapus semua unduhan
+offline-collection-clear = Hapus salinan offline
+confirm-offline-remove-title = Hapus salinan offline?
+confirm-offline-remove-tracks = Hapus { $count } salinan offline ({ $size })?
+confirm-offline-remove-album = Hapus { $count } lagu offline?
+confirm-offline-remove-playlist = Hapus { $count } lagu offline?
+confirm-offline-clear-all-title = Hapus semua unduhan?
+confirm-offline-clear-all = Hapus permanen semua { $count } lagu offline ({ $size })? Tindakan ini tidak dapat dibatalkan.
+offline-artist-eyebrow = Artis yang diunduh
+offline-artist-albums = Album yang diunduh
+offline-artist-songs = Lagu yang diunduh
+offline-artist-empty = Tidak ada lagi karya artis ini yang diunduh.
+offline-artist-album-count = { $count } album
+menu-dismiss-offline = Abaikan penyimpanan yang gagal
+trouble-offline-downloads = Periksa koneksi internet Anda. Lagu yang diunduh tetap bisa diputar.
+trouble-go-downloaded = Buka Diunduh
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } disimpan offline
+   *[other] { $succeeded } disimpan / { $failed } gagal
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } dihapus
+   *[other] { $succeeded } dihapus / { $failed } gagal
+}
+trouble-offline = Tidak ada koneksi
+trouble-offline-detail = Periksa koneksi internet Anda lalu coba lagi.
+toast-offline = Tidak ada koneksi. Tidak ada streaming sampai koneksi kembali.

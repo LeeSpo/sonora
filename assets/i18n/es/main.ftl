@@ -822,3 +822,76 @@ nav-pins-alphabetical = Alfabético
 nav-pins-kind = Por tipo
 nav-show-full-library = Ver toda la biblioteca
 nav-return-top = Volver arriba
+
+# Offline / downloads
+nav-offline = Descargado
+menu-save-offline = Guardar sin conexión
+menu-save-tracks-offline = { $count ->
+    [one] Guardar { $count } canción sin conexión
+   *[other] Guardar { $count } canciones sin conexión
+}
+menu-remove-offline = Quitar copia sin conexión
+menu-remove-tracks-offline = { $count ->
+    [one] Quitar { $count } copia sin conexión
+   *[other] Quitar { $count } copias sin conexión
+}
+offline-empty = Las canciones que guardes sin conexión aparecerán aquí.
+filter-offline = Filtrar canciones descargadas
+offline-status-saving = Guardando sin conexión…
+offline-status-failed = Error al guardar sin conexión — haz clic para reintentar
+offline-progress = Guardando { $settled } de { $total }
+offline-failed-count = { $count ->
+    [one] { $count } fallida
+   *[other] { $count } fallidas
+}
+offline-retry-failed = Reintentar fallidas
+menu-retry-offline = Reintentar guardado sin conexión
+offline-clear-failed = Borrar fallidas
+offline-collection-save = Guardar todo sin conexión
+offline-collection-saved = Todas las canciones guardadas sin conexión
+offline-albums = Álbumes descargados
+offline-songs = Canciones descargadas
+offline-album-meta = { $count ->
+    [one] { $count } canción · { $size }
+   *[other] { $count } canciones · { $size }
+}
+offline-clear-album = Quitar álbum sin conexión
+offline-clear-all = Borrar todas las descargas
+offline-collection-clear = Quitar copias sin conexión
+confirm-offline-remove-title = ¿Quitar copias sin conexión?
+confirm-offline-remove-tracks = { $count ->
+    [one] ¿Quitar esta copia sin conexión ({ $size })?
+   *[other] ¿Quitar { $count } copias sin conexión ({ $size })?
+}
+confirm-offline-remove-album = { $count ->
+    [one] ¿Quitar { $count } canción sin conexión?
+   *[other] ¿Quitar { $count } canciones sin conexión?
+}
+confirm-offline-remove-playlist = { $count ->
+    [one] ¿Quitar { $count } canción sin conexión?
+   *[other] ¿Quitar { $count } canciones sin conexión?
+}
+confirm-offline-clear-all-title = ¿Borrar todas las descargas?
+confirm-offline-clear-all = ¿Eliminar permanentemente las { $count } canciones sin conexión ({ $size })? No se puede deshacer.
+offline-artist-eyebrow = Artista descargado
+offline-artist-albums = Álbumes descargados
+offline-artist-songs = Canciones descargadas
+offline-artist-empty = Ya no hay nada descargado de este artista.
+offline-artist-album-count = { $count ->
+    [one] { $count } álbum
+   *[other] { $count } álbumes
+}
+menu-dismiss-offline = Descartar guardado fallido
+trouble-offline-downloads = Comprueba tu conexión a Internet. Tus canciones descargadas siguen sonando.
+trouble-go-downloaded = Ir a Descargado
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } guardadas sin conexión
+   *[other] { $succeeded } guardadas / { $failed } fallidas
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } quitadas
+   *[other] { $succeeded } quitadas / { $failed } fallidas
+}
+trouble-offline = Sin conexión
+trouble-offline-detail = Comprueba tu conexión a Internet e inténtalo de nuevo.
+toast-offline = Sin conexión. No se transmitirá nada hasta que vuelva.

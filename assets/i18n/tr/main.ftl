@@ -710,3 +710,52 @@ nav-pins-alphabetical = Alfabetik
 nav-pins-kind = Türe göre
 nav-show-full-library = Tüm kitaplığı göster
 nav-return-top = Başa dön
+
+# Offline / downloads
+nav-offline = İndirilenler
+menu-save-offline = Çevrimdışı kaydet
+menu-save-tracks-offline = { $count } parçayı çevrimdışı kaydet
+menu-remove-offline = Çevrimdışı kopyayı kaldır
+menu-remove-tracks-offline = { $count } çevrimdışı kopyayı kaldır
+offline-empty = Çevrimdışı kaydettiğiniz parçalar burada görünür.
+filter-offline = İndirilen parçaları filtrele
+offline-status-saving = Çevrimdışı kaydediliyor…
+offline-status-failed = Çevrimdışı kaydetme başarısız — yeniden denemek için tıklayın
+offline-progress = { $total } içinden { $settled } kaydediliyor
+offline-failed-count = { $count } başarısız
+offline-retry-failed = Başarısızları yeniden dene
+menu-retry-offline = Çevrimdışı kaydetmeyi yeniden dene
+offline-clear-failed = Başarısızları temizle
+offline-collection-save = Tümünü çevrimdışı kaydet
+offline-collection-saved = Tüm parçalar çevrimdışı kaydedildi
+offline-albums = İndirilen albümler
+offline-songs = İndirilen şarkılar
+offline-album-meta = { $count } şarkı · { $size }
+offline-clear-album = Çevrimdışı albümü kaldır
+offline-clear-all = Tüm indirmeleri temizle
+offline-collection-clear = Çevrimdışı kopyaları kaldır
+confirm-offline-remove-title = Çevrimdışı kopyalar kaldırılsın mı?
+confirm-offline-remove-tracks = { $count } çevrimdışı kopya ({ $size }) kaldırılsın mı?
+confirm-offline-remove-album = { $count } çevrimdışı şarkı kaldırılsın mı?
+confirm-offline-remove-playlist = { $count } çevrimdışı şarkı kaldırılsın mı?
+confirm-offline-clear-all-title = Tüm indirmeler temizlensin mi?
+confirm-offline-clear-all = Tüm { $count } çevrimdışı şarkı ({ $size }) kalıcı olarak silinsin mi? Bu geri alınamaz.
+offline-artist-eyebrow = İndirilen sanatçı
+offline-artist-albums = İndirilen albümler
+offline-artist-songs = İndirilen şarkılar
+offline-artist-empty = Bu sanatçıya ait indirilmiş bir şey kalmadı.
+offline-artist-album-count = { $count } albüm
+menu-dismiss-offline = Başarısız kaydı yok say
+trouble-offline-downloads = İnternet bağlantınızı kontrol edin. İndirilen parçalarınız çalmaya devam eder.
+trouble-go-downloaded = İndirilenlere git
+toast-offline-save-summary = { $failed ->
+    [0] { $succeeded } çevrimdışı kaydedildi
+   *[other] { $succeeded } kaydedildi / { $failed } başarısız
+}
+toast-offline-remove-summary = { $failed ->
+    [0] { $succeeded } kaldırıldı
+   *[other] { $succeeded } kaldırıldı / { $failed } başarısız
+}
+trouble-offline = Bağlantı yok
+trouble-offline-detail = İnternet bağlantınızı kontrol edip tekrar deneyin.
+toast-offline = Bağlantı yok. Bağlantı gelene kadar akış olmayacak.
