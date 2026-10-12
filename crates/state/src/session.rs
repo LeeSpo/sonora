@@ -362,8 +362,11 @@ impl Session {
 
     /// The host to try when checking whether the network is back. It is the active provider's
     /// own, so the check never touches a service the app is not already using.
-    pub fn reach(&self) -> Option<String> {
-        self.providers.get(self.active?)?.reach()
+    pub fn reach(&self) -> Vec<(String, u16)> {
+        self.active
+            .and_then(|index| self.providers.get(index))
+            .map(|provider| provider.reach_targets())
+            .unwrap_or_default()
     }
 
     pub fn local_slug(&self) -> &'static str {
@@ -711,6 +714,22 @@ impl Session {
         index: usize,
         cx: &mut Context<Self>,
     ) {
+        let failure = Failure {
+            problem: Some(music::SignInProblem::Network),
+            summary: "the provider could not be reached".into(),
+            detail: None,
+        };
+        // A retry that failed again while cached playback is already running: keep the engine,
+        // the queue and the position exactly as they are. Re-installing the session and emitting
+        // SignedIn here is what used to restart the current track every few seconds.
+        if self.active == Some(index) && self.playback.is_some() {
+            log::debug!("session: still offline, leaving cached playback alone");
+            self.awaiting = None;
+            Network::failed(&failure.summary, cx);
+            self.state = SessionState::Offline(failure);
+            cx.notify();
+            return;
+        }
         self.active = Some(index);
         self.awaiting = None;
         self.error = None;
@@ -719,11 +738,6 @@ impl Session {
             settings.set_provider(slug, cx);
         });
         self.install_provider_session(session, cx);
-        let failure = Failure {
-            problem: Some(music::SignInProblem::Network),
-            summary: "the provider could not be reached".into(),
-            detail: None,
-        };
         log::warn!("session: carrying on offline with cached Subsonic playback");
         Network::failed(&failure.summary, cx);
         self.state = SessionState::Offline(failure);
@@ -748,7 +762,15 @@ impl Session {
             settings.set_provider(slug, cx);
         });
         let profile = session.profile.clone();
+        // Back online after running from the offline cache: the cached engine keeps playing.
+        // Its factory is kept so the player sees the same engine source and does not restart.
+        let kept = (!replaced && self.active == Some(index))
+            .then(|| self.playback.clone())
+            .flatten();
         self.install_provider_session(session, cx);
+        if let Some(kept) = kept {
+            self.playback = Some(kept);
+        }
         self.state = SessionState::SignedIn(profile);
         self.attempt = 0;
         self.start_heartbeat(cx);

@@ -690,6 +690,11 @@ pub trait MusicProvider: Send + Sync {
     fn reach(&self) -> Option<String> {
         None
     }
+    /// Every `(host, port)` to try when checking whether the network is back, in order. By
+    /// default the [`reach`](Self::reach) host on 443.
+    fn reach_targets(&self) -> Vec<(String, u16)> {
+        self.reach().map(|host| vec![(host, 443)]).unwrap_or_default()
+    }
     /// What a status calls this provider after "listening to". A service answers with its own
     /// name; one that is only the user's own files says what the files are instead.
     fn listening_to(&self) -> &'static str {

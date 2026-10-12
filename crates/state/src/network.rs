@@ -15,8 +15,6 @@ const PROBE: [Duration; 4] = [
 ];
 /// How long a check may take before it counts as a failure.
 const PATIENCE: Duration = Duration::from_secs(4);
-/// The port a check connects on, which is the one every provider is reached over.
-const PORT: u16 = 443;
 
 /// Raised when the network came back, so a screen that gave up can load again.
 pub struct Reconnected;
@@ -115,19 +113,24 @@ impl Network {
                 let wait = PROBE[tried.min(PROBE.len() - 1)];
                 cx.background_executor().timer(wait).await;
 
-                let Ok(host) = this.update(cx, |this, cx| this.session.read(cx).reach()) else {
+                let Ok(targets) = this.update(cx, |this, cx| this.session.read(cx).reach()) else {
                     return;
                 };
-                let Some(host) = host else {
+                if targets.is_empty() {
                     continue;
-                };
+                }
+                // Each configured address on its own port (e.g. a Subsonic server on :9999);
+                // probing a fixed 443 could "succeed" against an unrelated listener and send the
+                // session into a reconnect loop while the provider itself is still unreachable.
                 let reached = io
                     .spawn(async move {
-                        let connect = tokio::net::TcpStream::connect((host.as_str(), PORT));
-                        match tokio::time::timeout(PATIENCE, connect).await {
-                            Ok(answer) => answer.is_ok(),
-                            Err(_) => false,
+                        for (host, port) in targets {
+                            let connect = tokio::net::TcpStream::connect((host.as_str(), port));
+                            if let Ok(Ok(_)) = tokio::time::timeout(PATIENCE, connect).await {
+                                return true;
+                            }
                         }
+                        false
                     })
                     .await;
                 if matches!(reached, Ok(true)) {

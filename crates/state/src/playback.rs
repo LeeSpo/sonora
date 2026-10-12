@@ -416,6 +416,9 @@ pub struct Playback {
     resume_ready: bool,
     /// Whether playback stopped on a stale session and continues once it reconnects.
     awaiting_reconnect: bool,
+    /// The factory the streaming engine was started from, so a repeated SignedIn/Reconnected
+    /// with the same one leaves the running engine alone.
+    factory: Option<Arc<dyn PlaybackFactory>>,
     /// The position last written to settings for resuming.
     stored: Duration,
     sleep: Option<Sleep>,
@@ -437,6 +440,9 @@ impl Playback {
                 let Some(playback) = session.read(cx).playback() else {
                     return;
                 };
+                if this.bound_to(&playback) {
+                    return;
+                }
                 this.start_engine(playback, cx);
                 this.adopt(cx);
             }
@@ -444,6 +450,9 @@ impl Playback {
                 let Some(playback) = session.read(cx).playback() else {
                     return;
                 };
+                if !this.awaiting_reconnect && this.bound_to(&playback) {
+                    return;
+                }
                 this.rebind(playback, cx);
             }
             SessionEvent::SignedOut => this.teardown(cx),
@@ -514,6 +523,7 @@ impl Playback {
             intent: Intent::Pause,
             resume_ready: false,
             awaiting_reconnect: false,
+            factory: None,
             stored: Duration::ZERO,
             sleep: None,
             sleep_task: None,
@@ -2151,7 +2161,13 @@ impl Playback {
     }
 
     /// Builds the streaming engine and starts pumping its events.
+    /// Whether the streaming engine is running and was started from this very factory.
+    fn bound_to(&self, playback: &Arc<dyn PlaybackFactory>) -> bool {
+        self.engine.is_some() && self.factory.as_ref().is_some_and(|f| same_factory(f, playback))
+    }
+
     fn start_engine(&mut self, playback: Arc<dyn PlaybackFactory>, cx: &mut Context<Self>) {
+        self.factory = Some(playback.clone());
         let config = PlaybackConfig {
             normalisation: self.normalisation,
             gapless: self.gapless,
@@ -2621,4 +2637,9 @@ mod tests {
             previous = sample;
         }
     }
+}
+
+/// Compares two factories by allocation only (ignoring vtables, which may differ per crate).
+fn same_factory(a: &Arc<dyn PlaybackFactory>, b: &Arc<dyn PlaybackFactory>) -> bool {
+    std::ptr::eq(Arc::as_ptr(a) as *const (), Arc::as_ptr(b) as *const ())
 }

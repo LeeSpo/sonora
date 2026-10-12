@@ -281,6 +281,12 @@ impl MusicProvider for SubsonicProvider {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    fn reach_targets(&self) -> Vec<(String, u16)> {
+        auth::load()
+            .map(|remembered| reach_targets(&remembered.addresses()))
+            .unwrap_or_default()
+    }
+
     async fn restore(&self) -> Result<Option<ProviderSession>> {
         Self::restore_stored().await
     }
@@ -312,5 +318,48 @@ impl MusicProvider for SubsonicProvider {
 
     fn sign_out(&self) {
         auth::forget();
+    }
+}
+
+/// `(host, port)` for each configured address, using the URL's own port (or the scheme's
+/// default), without duplicates.
+pub(crate) fn reach_targets(addresses: &[String]) -> Vec<(String, u16)> {
+    let mut targets: Vec<(String, u16)> = Vec::new();
+    for address in addresses {
+        let Ok(url) = reqwest::Url::parse(address) else {
+            continue;
+        };
+        let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
+            continue;
+        };
+        let host = host.trim_start_matches('[').trim_end_matches(']').to_owned();
+        if !targets.iter().any(|(h, p)| *h == host && *p == port) {
+            targets.push((host, port));
+        }
+    }
+    targets
+}
+
+#[cfg(test)]
+mod reach_tests {
+    use super::reach_targets;
+
+    #[test]
+    fn uses_each_address_and_its_port() {
+        let urls = vec![
+            "https://music.xyilee.com:9999".to_owned(),
+            "http://192.168.1.5:4533/".to_owned(),
+            "https://plain.example.com".to_owned(),
+            "https://music.xyilee.com:9999/rest".to_owned(),
+            "not a url".to_owned(),
+        ];
+        assert_eq!(
+            reach_targets(&urls),
+            vec![
+                ("music.xyilee.com".to_owned(), 9999),
+                ("192.168.1.5".to_owned(), 4533),
+                ("plain.example.com".to_owned(), 443),
+            ]
+        );
     }
 }
