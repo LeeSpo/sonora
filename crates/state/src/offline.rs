@@ -442,6 +442,11 @@ impl Offline {
         music::offline::albums()
     }
 
+    /// Ready tracks for a Downloaded album card, in disc then track order.
+    pub fn album_tracks(&self, album: &music::offline::AlbumGroup) -> Vec<Track> {
+        album_tracks_of(&album.track_ids, &self.tracks)
+    }
+
     /// Bytes the given ready track ids take (for confirmations).
     pub fn size_of(&self, track_ids: &[String]) -> u64 {
         music::offline::size_of(track_ids)
@@ -715,6 +720,24 @@ fn credits(track: &Track, key: &str, name: Option<&str>) -> bool {
     })
 }
 
+/// Resolve saved track ids into `Track`s in disc then track order for playback.
+fn album_tracks_of(track_ids: &[String], tracks: &[Track]) -> Vec<Track> {
+    let want: HashSet<&str> = track_ids.iter().map(String::as_str).collect();
+    let mut out: Vec<Track> = tracks
+        .iter()
+        .filter(|track| track.id.as_deref().is_some_and(|id| want.contains(id)))
+        .cloned()
+        .collect();
+    out.sort_by_key(|track| {
+        (
+            track.disc_number,
+            track.track_number,
+            track.name.to_lowercase(),
+        )
+    });
+    out
+}
+
 /// Everything saved of the artist `key`, grouped into albums. `None` when nothing is saved,
 /// so the offline artist page is never empty.
 pub(crate) fn artist_tracks(key: &str, tracks: &[Track]) -> Option<OfflineArtist> {
@@ -906,5 +929,21 @@ mod tests {
         let found = artist_tracks("ar1", &[later, second, first]).expect("saved");
 
         assert_eq!(ids(&found.tracks), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn downloaded_album_tracks_resolve_ids_in_play_order() {
+        let mut second = cached("b", "Alpha", "Record", vec![artist("Alpha", "ar1")]);
+        second.track_number = 2;
+        let mut first = cached("a", "Alpha", "Record", vec![artist("Alpha", "ar1")]);
+        first.track_number = 1;
+        let mut later = cached("c", "Alpha", "Record", vec![artist("Alpha", "ar1")]);
+        later.disc_number = 2;
+        later.track_number = 1;
+        let other = cached("z", "Beta", "Other", vec![artist("Beta", "ar2")]);
+        let tracks = vec![later, other, second, first];
+        let track_ids = vec!["c".into(), "a".into(), "b".into()];
+
+        assert_eq!(ids(&album_tracks_of(&track_ids, &tracks)), ["a", "b", "c"]);
     }
 }
