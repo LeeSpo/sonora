@@ -5,7 +5,7 @@ use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 use gpui::{AnyElement, App, Entity, SharedString, TextAlign};
 use i18n::t;
 use music::{Album, Shape};
-use state::{Library, LibraryPart, Origin, Playback, Shelf};
+use state::{Library, LibraryPart, Network, Origin, Playback, Shelf};
 use ui::rank::{HANDY, NICE, SPARE, USEFUL};
 use ui::{Cell, ColumnSpec, Menu, Pin, TableSource, Width};
 
@@ -135,7 +135,19 @@ impl AlbumSource {
         let origin = Origin::album(album.id.clone()).named(album.name.clone());
         let playing = self.playback.read(cx).playing_from(&origin);
         let played = origin.clone();
+        let album_id = album.id.clone();
+        let album_name = album.name.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
+            if Network::lost(cx)
+                && crate::shared::offline_play::start_album(
+                    playback,
+                    &album_id,
+                    &album_name,
+                    cx,
+                )
+            {
+                return;
+            }
             playback.play_origin(played.clone(), cx)
         });
 
@@ -174,7 +186,11 @@ impl AlbumSource {
     }
 
     fn albums<'a>(&self, cx: &'a App) -> &'a [Album] {
-        self.library.read(cx).state(self.shelf).albums()
+        let library = self.library.read(cx);
+        match self.favorites_only {
+            true => library.favorite_albums(self.shelf),
+            false => library.state(self.shelf).albums(),
+        }
     }
 
     /// Whether the shelf lists more than the favorites, so a favorites filter has something to do.
@@ -196,7 +212,15 @@ impl TableSource for AlbumSource {
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
         self.at(row, cx).is_some_and(|album| {
-            if self.starred && !self.library.read(cx).saved_album(&album.id) {
+            if self.starred && !self.favorites_only && !self.library.read(cx).saved_album(&album.id)
+            {
+                return false;
+            }
+            // Offline Favorites: only albums with at least one cached track.
+            if self.favorites_only
+                && Network::lost(cx)
+                && !crate::shared::offline_play::album_cached(&album.id, &album.name)
+            {
                 return false;
             }
             if let Some((low, high)) = self.year_span {
@@ -268,9 +292,11 @@ impl TableSource for AlbumSource {
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        self.library
-            .read(cx)
-            .loading(self.shelf, LibraryPart::Albums)
+        let library = self.library.read(cx);
+        match self.favorites_only {
+            true => library.favorites_loading(self.shelf),
+            false => library.loading(self.shelf, LibraryPart::Albums),
+        }
     }
 
     fn pin(&self, row: usize, cx: &App) -> Option<Pin> {

@@ -1178,6 +1178,45 @@ impl Library {
         })
     }
 
+    /// Starred songs for a shelf. On a Catalog shelf these live beside the full list; on a
+    /// Saved shelf they are the list. Favorites reads here so it does not depend on the catalog
+    /// stream being loaded.
+    pub fn favorite_tracks(&self, shelf: Shelf) -> &[Track] {
+        self.held(shelf)
+            .favorites()
+            .map_or(&[], |favorites| favorites.tracks)
+    }
+
+    /// Starred albums for a shelf. See [`Self::favorite_tracks`].
+    pub fn favorite_albums(&self, shelf: Shelf) -> &[Album] {
+        self.held(shelf)
+            .favorites()
+            .map_or(&[], |favorites| favorites.albums)
+    }
+
+    /// Starred artists for a shelf. See [`Self::favorite_tracks`].
+    pub fn favorite_artists(&self, shelf: Shelf) -> &[SavedArtist] {
+        self.held(shelf)
+            .favorites()
+            .map_or(&[], |favorites| favorites.artists)
+    }
+
+    /// Whether a Favorites page should still wait. Starred rows come from their own snapshot
+    /// or fetch, so the catalog stream does not gate them: primed favorites show immediately,
+    /// and a failed catalog still leaves an empty (or snapshotted) favorites page.
+    pub fn favorites_loading(&self, shelf: Shelf) -> bool {
+        let held = self.held(shelf);
+        let has_starred = held.favorites().is_some_and(|favorites| {
+            !favorites.tracks.is_empty()
+                || !favorites.albums.is_empty()
+                || !favorites.artists.is_empty()
+        });
+        if has_starred {
+            return false;
+        }
+        matches!(held.state, LibraryState::Loading | LibraryState::Empty)
+    }
+
     fn favorites(&self, id: &str) -> Option<Favorites<'_>> {
         self.held(Shelf::of(id)).favorites()
     }

@@ -3,7 +3,7 @@ use gpui::{App, ElementId, Entity, FontWeight, SharedString, div};
 use i18n::t;
 use music::{Album, ArtistRef, Genre, GenreItem, Playlist, ReleaseType, SavedArtist, Track};
 use router::{Destination, navigate};
-use state::{Origin, Playback};
+use state::{Network, Origin, Playback};
 use ui::{ActiveTheme as _, Card, InlineLinks, Pinnable, Text, Theme};
 
 use crate::shared::cells;
@@ -26,7 +26,12 @@ pub(crate) fn album_card(
     let playing = playback.read(cx).playing_from(&origin) == Some(true);
     let pin = album.pin();
     let opened = SharedString::from(album.id.clone());
+    let album_id = album.id.clone();
+    let album_name = album.name.clone();
+    let pressed_id = album_id.clone();
+    let pressed_name = album_name.clone();
     let toggled = playback.clone();
+    let pressed = playback.clone();
 
     Card::new(id, SharedString::from(album.name.clone()))
         .cover(cover)
@@ -42,9 +47,28 @@ pub(crate) fn album_card(
             cx.theme(),
         ))
         .play(playing, move |_, _, cx| {
+            if crate::shared::offline_play::toggle_album(&album_id, &album_name, &toggled, cx) {
+                return;
+            }
             toggled.update(cx, |playback, cx| playback.toggle_origin(&origin, cx));
         })
-        .press(move |_, _, cx| navigate(Destination::Album(opened.clone()), cx))
+        .press(move |_, _, cx| {
+            // Album detail needs the network; offline, play cached tracks instead of a dead end.
+            if Network::lost(cx)
+                && crate::shared::offline_play::play_album(
+                    &pressed_id,
+                    &pressed_name,
+                    &pressed,
+                    cx,
+                )
+            {
+                return;
+            }
+            if Network::lost(cx) {
+                return;
+            }
+            navigate(Destination::Album(opened.clone()), cx)
+        })
         .menu(CardMenu::opener(
             Item::Album(album.clone()),
             playback.clone(),

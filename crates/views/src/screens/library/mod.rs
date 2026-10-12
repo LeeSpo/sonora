@@ -19,8 +19,8 @@ use i18n::t;
 use music::{Shape, Track};
 use router::{Destination, LibraryTab, navigate};
 use state::{
-    Addition, AppSettings, Library, LibraryPart, LibraryState, Origin, Playback, Scan, Shelf,
-    Sonora,
+    Addition, AppSettings, Library, LibraryPart, LibraryState, Network, Offline, Origin, Playback,
+    Scan, Shelf, Sonora,
 };
 use ui::{
     ActiveTheme as _, Button, Card, Deck, FilterChange, LEADING, Mode, Pinnable, Popovers, Popup,
@@ -174,15 +174,23 @@ fn origin(shelf: Shelf) -> Origin {
 struct ShelfTracks {
     library: Entity<Library>,
     shelf: Shelf,
+    favorites_only: bool,
 }
 
 impl Tracks for ShelfTracks {
     fn tracks<'a>(&self, cx: &'a App) -> &'a [Track] {
-        self.library.read(cx).state(self.shelf).tracks()
+        let library = self.library.read(cx);
+        match self.favorites_only {
+            true => library.favorite_tracks(self.shelf),
+            false => library.state(self.shelf).tracks(),
+        }
     }
 
     fn is_loading(&self, cx: &App) -> bool {
-        loading(&self.library, self.shelf, Section::Songs, cx)
+        match self.favorites_only {
+            true => self.library.read(cx).favorites_loading(self.shelf),
+            false => loading(&self.library, self.shelf, Section::Songs, cx),
+        }
     }
 }
 
@@ -274,6 +282,7 @@ impl LibraryView {
                 ShelfTracks {
                     library: library.clone(),
                     shelf,
+                    favorites_only,
                 },
                 playback.clone(),
                 playlist_scrollbar,
@@ -354,8 +363,18 @@ impl LibraryView {
         cx.observe(&Scan::global(cx), |_, _, cx| cx.notify())
             .detach();
 
-        let offline = state::Offline::global(cx);
+        let offline = Offline::global(cx);
         cx.observe(&offline, |this, _, cx| {
+            for table in this.tables() {
+                table.refresh(cx);
+            }
+            cx.notify();
+        })
+        .detach();
+
+        // Offline favorites filter to cached rows; flip the sieve when the network returns.
+        cx.observe(&Network::global(cx), |this, _, cx| {
+            this.cards_dirty = true;
             for table in this.tables() {
                 table.refresh(cx);
             }
@@ -576,15 +595,26 @@ impl LibraryView {
         let library = self.library.read(cx);
         let table = self.table(self.section);
         match library.state(self.shelf) {
-            LibraryState::Loading => return None,
-            LibraryState::Failed(reason) => {
+            LibraryState::Loading if !self.favorites_only => return None,
+            LibraryState::Loading if self.favorites_only => {
+                if library.favorites_loading(self.shelf) {
+                    return None;
+                }
+            }
+            LibraryState::Failed(reason) if !self.favorites_only => {
                 return Some(self.lost("library-lost", t!("library-not-loaded"), reason));
             }
+            // Favorites read the starred snapshot, so a failed catalog is an empty heart page
+            // rather than a network error that needs the server.
             _ if table.row_count(cx) > 0 => return None,
             _ => {}
         }
 
-        let problem = library.part_problem(self.shelf, self.section.part());
+        // Catalog part failures do not block Favorites: starred rows are a separate set.
+        let problem = match self.favorites_only {
+            true => None,
+            false => library.part_problem(self.shelf, self.section.part()),
+        };
         let shape = library.shape(self.shelf);
 
         Some(match (table.filtering(cx), problem) {
@@ -737,6 +767,20 @@ impl LibraryView {
         let Some(album) = album else {
             return;
         };
+        // Album detail needs the network; offline, play what is already on disk instead.
+        if Network::lost(cx)
+            && crate::shared::offline_play::play_album(
+                &album.id,
+                &album.name,
+                &self.playback,
+                cx,
+            )
+        {
+            return;
+        }
+        if Network::lost(cx) {
+            return;
+        }
         navigate(Destination::Album(album.id.into()), cx);
     }
 
