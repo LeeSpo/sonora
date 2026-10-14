@@ -174,12 +174,12 @@ impl Snapshots {
         kind: Kind,
         part: LibraryPart,
     ) -> Option<Snapshot<T>> {
-        let value = self
-            .cache
-            .read(&key(provider, kind, part))
+        self.cache
+            .read(&key(provider, kind, part), |value| {
+                serde_json::from_str::<Snapshot<T>>(value)
+            })
             .inspect_err(|error| log::warn!("library: cannot read a snapshot: {error:#}"))
-            .ok()??;
-        serde_json::from_str(&value)
+            .ok()??
             .inspect_err(|error| {
                 log::debug!(
                     "library: the {} snapshot no longer parses: {error:#}",

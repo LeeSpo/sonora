@@ -79,7 +79,7 @@ impl ArtistSource {
 
     fn index_cell(&self, cell: &Cell<ArtistField>, artist: &SavedArtist, cx: &App) -> AnyElement {
         let origin = Origin::artist(artist.id.clone()).named(artist.name.clone());
-        let playing = self.playback.read(cx).playing_from(&origin);
+        let playing = self.playback.read(cx).playing_from(&origin, cx);
         let played = origin.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
             playback.play_origin(played.clone(), cx)
@@ -118,7 +118,7 @@ impl TableSource for ArtistSource {
     }
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
-        self.at(row, cx).is_some_and(|artist| {
+        self.artists(cx).get(row).is_some_and(|artist| {
             if self.starred
                 && !self.favorites_only
                 && !self.library.read(cx).saved_artist(&artist.id)
@@ -168,7 +168,7 @@ impl TableSource for ArtistSource {
     fn playing(&self, row: usize, cx: &App) -> bool {
         self.artists(cx).get(row).is_some_and(|artist| {
             let origin = Origin::artist(artist.id.clone());
-            self.playback.read(cx).playing_from(&origin).is_some()
+            self.playback.read(cx).playing_from(&origin, cx).is_some()
         })
     }
 

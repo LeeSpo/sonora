@@ -18,6 +18,15 @@ const BUFFER: Duration = Duration::from_millis(50);
 /// one client however many engines are running. It runs at the rate of whatever played last and
 /// closes when the last output on it drops.
 static SHARED: Mutex<Weak<Device>> = Mutex::new(Weak::new());
+/// Whether the last attempt to open a device stream failed, which is what `failing` reports.
+static FAILING: AtomicBool = AtomicBool::new(false);
+
+/// A desktop sound server, which ALSA reaches only through the plugin its package installs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Server {
+    PipeWire,
+    PulseAudio,
+}
 
 #[derive(Clone)]
 pub struct Volume(Arc<AtomicU32>);
@@ -62,6 +71,12 @@ impl Device {
     /// the same device first. A stream left on a device that is no longer the default stays with
     /// the outputs still using it until they reopen.
     fn shared(rate: Option<u32>) -> Result<Arc<Self>> {
+        let shared = Self::reach(rate);
+        FAILING.store(shared.is_err(), Ordering::Release);
+        shared
+    }
+
+    fn reach(rate: Option<u32>) -> Result<Arc<Self>> {
         let device = cpal::default_host()
             .default_output_device()
             .context("no audio output device")?;
@@ -456,6 +471,37 @@ pub fn available() -> bool {
     cpal::default_host().default_output_device().is_some()
 }
 
+/// Whether a stream on the default device opens right now. The stream is the shared one, so it
+/// closes again at once unless an output already plays on it.
+pub fn openable() -> bool {
+    available() && Device::shared(None).is_ok()
+}
+
+/// Whether the last attempt to open the output failed, so whatever plays is not heard. On Linux
+/// ALSA always names a default device, so this rather than `available` is what tells that the
+/// sound cannot get out.
+pub fn failing() -> bool {
+    FAILING.load(Ordering::Acquire)
+}
+
+/// The sound server this session runs when ALSA has no plugin routing to it. Sonora then opens
+/// the card the server already holds and plays nothing, which `pipewire-alsa` or
+/// `pulseaudio-alsa` fixes. Only ALSA's configuration is read, no device is opened.
+#[cfg(target_os = "linux")]
+pub fn missing_bridge() -> Option<Server> {
+    let server = server()?;
+    let hints = alsa::device_name::HintIter::new_str(None, "pcm").ok()?;
+    let bridged = hints
+        .filter_map(|hint| hint.name)
+        .any(|name| name == "pipewire" || name == "pulse");
+    (!bridged).then_some(server)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn missing_bridge() -> Option<Server> {
+    None
+}
+
 fn ident(device: &cpal::Device) -> String {
     device
         .id()
@@ -491,4 +537,16 @@ fn at_rate(
                 && range.sample_format() == default.sample_format()
         })
         .find_map(|range| range.try_with_sample_rate(rate))
+}
+
+/// The sound server whose socket this session has, PipeWire first since it also answers on the
+/// PulseAudio socket.
+#[cfg(target_os = "linux")]
+fn server() -> Option<Server> {
+    let runtime = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
+    if runtime.join("pipewire-0").exists() {
+        return Some(Server::PipeWire);
+    }
+    let pulse = std::env::var_os("PULSE_SERVER").is_some() || runtime.join("pulse/native").exists();
+    pulse.then_some(Server::PulseAudio)
 }

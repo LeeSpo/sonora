@@ -1916,7 +1916,7 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "embed"
-version = "0.42.1"
+version = "0.43.0"
 
 [[package]]
 name = "embed-resource"
@@ -2046,7 +2046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3329,7 +3329,7 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "fluent-bundle",
  "gpui",
@@ -3364,7 +3364,7 @@ dependencies = [
 
 [[package]]
 name = "icons"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "embed",
@@ -3570,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "gpui",
  "ui",
@@ -4022,7 +4022,7 @@ dependencies = [
 [[package]]
 name = "librespot-audio"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "aes",
  "bytes",
@@ -4041,7 +4041,7 @@ dependencies = [
 [[package]]
 name = "librespot-core"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "aes",
  "base64",
@@ -4091,13 +4091,14 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid 1.24.0",
+ "vergen",
  "vergen-gitcl",
 ]
 
 [[package]]
 name = "librespot-metadata"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4114,20 +4115,21 @@ dependencies = [
 [[package]]
 name = "librespot-oauth"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "log",
  "oauth2",
  "open",
  "reqwest 0.12.28",
  "thiserror 2.0.19",
+ "tokio",
  "url",
 ]
 
 [[package]]
 name = "librespot-playback"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "cpal 0.16.0",
  "form_urlencoded",
@@ -4150,7 +4152,7 @@ dependencies = [
 [[package]]
 name = "librespot-protocol"
 version = "0.8.0"
-source = "git+https://github.com/sonorahq/librespot?rev=d16b7fa014aef21c0786a68f07c685c30df5b646#d16b7fa014aef21c0786a68f07c685c30df5b646"
+source = "git+https://github.com/sonorahq/librespot?rev=f5da0664e93b601cafa48ea41b5f08153b3c4f31#f5da0664e93b601cafa48ea41b5f08153b3c4f31"
 dependencies = [
  "protobuf",
  "protobuf-codegen",
@@ -4533,8 +4535,9 @@ dependencies = [
 
 [[package]]
 name = "music"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
+ "alsa 0.10.0",
  "anyhow",
  "async-trait",
  "base64",
@@ -6057,7 +6060,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6580,7 +6583,7 @@ dependencies = [
 
 [[package]]
 name = "router"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "gpui",
  "ui",
@@ -6721,7 +6724,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6734,7 +6737,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6828,7 +6831,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7391,7 +7394,7 @@ dependencies = [
 
 [[package]]
 name = "sonora"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -7411,6 +7414,7 @@ dependencies = [
  "music",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "raw-window-handle",
  "reqwest 0.13.4",
  "resvg",
@@ -7537,7 +7541,7 @@ dependencies = [
 
 [[package]]
 name = "state"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -7578,7 +7582,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -8095,7 +8099,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8660,7 +8664,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "ashpd",
  "futures",
@@ -9001,7 +9005,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "views"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "gpui",
  "i18n",
@@ -9291,7 +9295,7 @@ dependencies = [
 
 [[package]]
 name = "webview"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
@@ -9556,7 +9560,7 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "widevine"
-version = "0.42.1"
+version = "0.43.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -9567,6 +9571,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde_json",
  "sha2",
+ "smallvec",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -9593,7 +9598,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -10321,7 +10326,7 @@ dependencies = [
 [[package]]
 name = "ytmusic"
 version = "0.1.0"
-source = "git+https://github.com/sonorahq/ytmusic-rs?rev=f213c0b#f213c0b4351d7321514c9bbd96553ce1f73fb1c6"
+source = "git+https://github.com/sonorahq/ytmusic-rs?rev=0022146#00221466f16d5eac9a1d511ee5fe6629cf42ac56"
 dependencies = [
  "anyhow",
  "async-trait",

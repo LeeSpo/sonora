@@ -157,7 +157,7 @@ fn filed(text: &str) -> Option<Vec<LyricsLine>> {
         .map(|line| LyricsLine {
             start: Duration::from_millis(line.start_ms),
             end: line.end_ms.map(Duration::from_millis),
-            words: worded(&line.words),
+            words: worded(line.words),
             text: line.text,
             romanized: None,
             secondary: Vec::new(),
@@ -168,15 +168,15 @@ fn filed(text: &str) -> Option<Vec<LyricsLine>> {
     (!lines.is_empty()).then_some(lines)
 }
 
-fn worded(words: &[FileWord]) -> Option<Vec<LyricsWord>> {
+fn worded(words: Vec<FileWord>) -> Option<Vec<LyricsWord>> {
     let words: Vec<LyricsWord> = words
-        .iter()
+        .into_iter()
         .map(|word| {
             let start = Duration::from_millis(word.start_ms);
             LyricsWord {
                 start,
                 end: word.end_ms.map(Duration::from_millis).unwrap_or(start),
-                text: word.text.clone(),
+                text: word.text,
             }
         })
         .collect();

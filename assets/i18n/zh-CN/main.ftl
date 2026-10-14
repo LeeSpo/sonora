@@ -742,7 +742,6 @@ update-detail = 你当前使用的是 { $running }。查看更新内容，或立
 update-detail-notes = 你当前使用的是 { $running }。查看更新内容，然后按你的安装方式更新 Sonora。
 update-notes = 新内容
 update-now = 更新
-update-later = 稍后
 update-working = 正在下载更新…
 update-failed = 更新无法安装。请从发布页面重试。
 settings-check-updates = 检查更新

@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
-    App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, SharedString, Stateful,
-    StyleRefinement, Window, div, px, svg,
+    App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels, SharedString,
+    Stateful, StyleRefinement, Window, div, px, svg,
 };
 
 use crate::glass::{blurring, frost};
@@ -15,6 +15,8 @@ const FADED: f32 = 0.55;
 /// laying a themed slab over it.
 const TINT_HOVER: f32 = 0.14;
 const TINT_ACTIVE: f32 = 0.24;
+/// How far a small button's label sits from its edge, which text set beside one lines up with.
+pub const SMALL_INSET: Pixels = px(8.);
 
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
@@ -309,7 +311,7 @@ impl RenderOnce for Button {
             false => tint.unwrap_or(palette.foreground),
         };
         let (height, padding, gap) = match small {
-            true => (theme.metrics.control_small, px(8.), px(4.)),
+            true => (theme.metrics.control_small, SMALL_INSET, px(4.)),
             false => (theme.metrics.control, px(12.), px(6.)),
         };
         let (hover, active) = match interactive {

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::Range;
 use std::time::Duration;
 
@@ -62,6 +63,21 @@ const WIDE_MARKS: &[(char, char)] = &[
     ('\u{2032}', '\''),
     ('\u{00b4}', '\''),
     ('`', '\''),
+];
+
+/// The section labels a sheet may carry as a line of its own, such as `[Chorus]`.
+const SECTIONS: &[&str] = &[
+    "intro",
+    "verse",
+    "pre-chorus",
+    "chorus",
+    "refrain",
+    "hook",
+    "bridge",
+    "breakdown",
+    "solo",
+    "instrumental",
+    "outro",
 ];
 
 pub fn parse(lrc: &str) -> Vec<LyricsLine> {
@@ -186,10 +202,18 @@ fn unwiden(lines: &mut [LyricsLine]) {
 }
 
 fn narrow(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
-    for word in words.iter_mut().flatten() {
+    for word in words.iter_mut().flatten().filter(|word| wide(&word.text)) {
         word.text = narrowed(&word.text);
     }
-    *text = narrowed(text);
+    if wide(text) {
+        *text = narrowed(text);
+    }
+}
+
+/// Whether `text` holds a mark [`narrowed`] replaces.
+fn wide(text: &str) -> bool {
+    text.chars()
+        .any(|letter| WIDE_MARKS.iter().any(|(from, _)| *from == letter))
 }
 
 fn narrowed(text: &str) -> String {
@@ -237,26 +261,27 @@ fn capitalize(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
         .iter_mut()
         .flatten()
         .find(|word| word.text.chars().any(char::is_alphanumeric))
+        && let Some(upper) = uppercased(&word.text)
     {
-        word.text = uppercased(&word.text);
+        word.text = upper;
     }
-    *text = uppercased(text);
+    if let Some(upper) = uppercased(text) {
+        *text = upper;
+    }
 }
 
-fn uppercased(text: &str) -> String {
-    let Some((at, letter)) = text
+/// `text` with its first letter or digit uppercased, or nothing when that one is not lowercase.
+fn uppercased(text: &str) -> Option<String> {
+    let (at, letter) = text
         .char_indices()
         .find(|(_, letter)| letter.is_alphanumeric())
-        .filter(|(_, letter)| letter.is_lowercase())
-    else {
-        return text.to_owned();
-    };
-    format!(
+        .filter(|(_, letter)| letter.is_lowercase())?;
+    Some(format!(
         "{}{}{}",
         &text[..at],
         letter.to_uppercase(),
         &text[at + letter.len_utf8()..]
-    )
+    ))
 }
 
 fn demark(lines: &mut [LyricsLine]) {
@@ -269,6 +294,13 @@ fn demark(lines: &mut [LyricsLine]) {
 }
 
 fn unmark(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
+    let marked = match words.as_ref() {
+        Some(words) => words.iter().any(|word| word.text.contains('<')),
+        None => text.contains('<'),
+    };
+    if !marked {
+        return;
+    }
     let whole: String = match words.as_ref() {
         Some(words) => words.iter().map(|word| word.text.as_str()).collect(),
         None => text.clone(),
@@ -343,7 +375,10 @@ fn tighten(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
         Some(words) if spaced => {
             let mut trailing = true;
             for index in 0..words.len() {
-                let mut tidied = unspace_punctuation(&squeezed(&words[index].text));
+                let mut tidied = match settled(&words[index].text) {
+                    true => std::mem::take(&mut words[index].text),
+                    false => unspace_punctuation(&squeezed(&words[index].text)),
+                };
                 if trailing && tidied.starts_with(' ') {
                     tidied.remove(0);
                 }
@@ -353,7 +388,8 @@ fn tighten(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
                         .rev()
                         .find(|word| !word.text.is_empty())
                 {
-                    previous.text = previous.text.trim_end().to_owned();
+                    let kept = previous.text.trim_end().len();
+                    previous.text.truncate(kept);
                 }
                 trailing = tidied.ends_with(' ');
                 words[index].text = tidied;
@@ -365,8 +401,23 @@ fn tighten(words: &mut Option<Vec<LyricsWord>>, text: &mut String) {
             }
             *text = words.iter().map(|word| word.text.as_str()).collect();
         }
+        _ if settled(text) && text.trim().len() == text.len() => {}
         _ => *text = unspace_punctuation(&squeezed(text)).trim().to_owned(),
     }
+}
+
+/// Whether squeezing and unspacing `text` would leave it as it is: every space in it is one
+/// plain space, and none stands before closing punctuation.
+fn settled(text: &str) -> bool {
+    let mut spaced = false;
+    for letter in text.chars() {
+        let space = letter.is_whitespace();
+        if (space && (letter != ' ' || spaced)) || (spaced && closing_punctuation(letter)) {
+            return false;
+        }
+        spaced = space;
+    }
+    true
 }
 
 fn unspace_punctuation(text: &str) -> String {
@@ -467,36 +518,23 @@ fn structural(text: &str) -> bool {
     if text.is_empty() || !text.chars().any(char::is_alphanumeric) {
         return true;
     }
-    let label = text
-        .trim_matches(|letter: char| {
-            letter.is_whitespace() || matches!(letter, '[' | ']' | '-' | '—')
-        })
-        .to_ascii_lowercase();
     let wrapped = (text.starts_with('[') && text.ends_with(']'))
         || (text.starts_with('-') && text.ends_with('-'));
+    let label = text.trim_matches(|letter: char| {
+        letter.is_whitespace() || matches!(letter, '[' | ']' | '-' | '—')
+    });
     wrapped
-        && matches!(
-            label.as_str(),
-            "intro"
-                | "verse"
-                | "pre-chorus"
-                | "chorus"
-                | "refrain"
-                | "hook"
-                | "bridge"
-                | "breakdown"
-                | "solo"
-                | "instrumental"
-                | "outro"
-        )
+        && SECTIONS
+            .iter()
+            .any(|section| label.eq_ignore_ascii_case(section))
 }
 
 fn separate_background(line: &mut LyricsLine) {
-    let original = line.text.clone();
-    let spans = parenthetical_spans(&original);
+    let spans = parenthetical_spans(&line.text);
     if spans.is_empty() {
         return;
     }
+    let original = line.text.clone();
     let placements = line
         .words
         .as_deref()
@@ -666,7 +704,11 @@ fn close(lines: &mut [LyricsLine]) {
 }
 
 pub fn stamp_of(stamp: &str) -> Option<Duration> {
-    let stamp = stamp.trim().replace(',', ".");
+    let stamp = stamp.trim();
+    let stamp = match stamp.contains(',') {
+        true => Cow::Owned(stamp.replace(',', ".")),
+        false => Cow::Borrowed(stamp),
+    };
     let mut parts = stamp.split(':');
     let first = parts.next()?;
     let second = parts.next()?;
@@ -720,17 +762,26 @@ fn read(line: &str) -> Vec<LyricsLine> {
     }
 
     let (rest, closed) = closed_at(rest);
-    let (text, words) = spoken(rest);
+    let (mut text, mut words) = spoken(rest);
+    let last = stamps.len().saturating_sub(1);
     stamps
         .into_iter()
-        .map(|start| LyricsLine {
-            start,
-            end: closed.filter(|end| *end > start),
-            text: text.clone(),
-            romanized: None,
-            words: words.clone().map(|words| shifted(words, start)),
-            secondary: Vec::new(),
-            voice: Voice::Lead,
+        .enumerate()
+        .map(|(index, start)| {
+            // A line stamped more than once is copied for every stamp but the last, which takes it.
+            let (text, words) = match index == last {
+                true => (std::mem::take(&mut text), words.take()),
+                false => (text.clone(), words.clone()),
+            };
+            LyricsLine {
+                start,
+                end: closed.filter(|end| *end > start),
+                text,
+                romanized: None,
+                words: words.map(|words| shifted(words, start)),
+                secondary: Vec::new(),
+                voice: Voice::Lead,
+            }
         })
         .collect()
 }
@@ -774,7 +825,14 @@ fn closed_at(rest: &str) -> (&str, Option<Duration>) {
 }
 
 fn spoken(body: &str) -> (String, Option<Vec<LyricsWord>>) {
-    let segments = cut(body);
+    let mut segments = cut(body);
+    if let [only] = segments.as_mut_slice() {
+        let text = std::mem::take(&mut only.text);
+        return match text.trim().len() == text.len() {
+            true => (text, None),
+            false => (text.trim().to_owned(), None),
+        };
+    }
     let whole: String = segments
         .iter()
         .map(|segment| segment.text.as_str())

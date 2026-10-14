@@ -673,7 +673,6 @@ update-detail = { $running } sürümünü kullanıyorsun. Nelerin değiştiğini
 update-detail-notes = { $running } sürümünü kullanıyorsun. Nelerin değiştiğini oku, sonra Sonora'yı kurduğun yoldan güncelle.
 update-notes = Yenilikler
 update-now = Güncelle
-update-later = Daha sonra
 update-working = Güncelleme indiriliyor…
 update-failed = Güncelleme kurulamadı. Yayınlar sayfasından yeniden dene.
 settings-check-updates = Güncellemeleri denetle

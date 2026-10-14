@@ -313,7 +313,7 @@ impl Scrobbling {
 
     /// Submits the play to every service that has not had it yet, once it has run long enough.
     fn tick(&mut self, cx: &mut Context<Self>) {
-        let Some(play) = self.play.clone() else {
+        let Some(play) = self.play.as_ref() else {
             return;
         };
         let playback = self.playback.read(cx);

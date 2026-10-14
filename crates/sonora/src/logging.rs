@@ -6,10 +6,14 @@ use env_logger::{Env, Logger, Target};
 use log::{Log, Metadata, Record};
 
 const CONSOLE: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error";
-const DISK: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error,sonora=debug,ui=debug,music=debug,ytmusic=debug";
+const DISK: &str = "warn,symphonia=error,lofty=error,discord_rich_presence=error,sonora=debug,ui=debug,music=debug,ytmusic=debug,state::potoken=debug";
 const FILTER: &str = "SONORA_LOG";
 const PREVIOUS: &str = "sonora.log.1";
 const LIMIT: u64 = 16 * 1024 * 1024;
+/// How many runs the log keeps, counting the one that is starting.
+const SESSIONS: usize = 5;
+/// The first line of every run, which is how a later start finds where each run began.
+const STARTED: &str = "logging: sonora";
 
 /// Logs to stderr only, for a process that is not the app, such as the Widevine host.
 pub fn console() {
@@ -43,7 +47,7 @@ pub fn init() {
     }
     catch_panics();
 
-    log::debug!("logging: sonora {} started", env!("CARGO_PKG_VERSION"));
+    log::debug!("{STARTED} {} started", env!("CARGO_PKG_VERSION"));
 }
 
 /// Writes a panic to the log before the default hook prints it. A Sonora started from a
@@ -120,6 +124,7 @@ impl Log for Fan {
 fn open() -> Option<Capped> {
     let path = state::log_file()?;
     fs::create_dir_all(path.parent()?).ok()?;
+    trim(&path);
 
     let outgrown = fs::metadata(&path).is_ok_and(|file| file.len() > LIMIT);
     if outgrown {
@@ -133,6 +138,32 @@ fn open() -> Option<Capped> {
         file,
         written,
     })
+}
+
+/// Cuts the log down to its last `SESSIONS - 1` runs, so the run that is starting makes
+/// `SESSIONS`. Once the log holds that many, everything in `PREVIOUS` is older, so it goes too.
+fn trim(path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let marker = format!("] {STARTED} ");
+    let starts: Vec<usize> = text
+        .match_indices(&marker)
+        .map(|(at, _)| text[..at].rfind('\n').map_or(0, |line| line + 1))
+        .collect();
+    let Some(&keep) = starts
+        .len()
+        .checked_sub(SESSIONS - 1)
+        .and_then(|first| starts.get(first))
+    else {
+        return;
+    };
+    if let Some(folder) = path.parent() {
+        let _ = fs::remove_file(folder.join(PREVIOUS));
+    }
+    if keep > 0 {
+        let _ = fs::write(path, &text[keep..]);
+    }
 }
 
 fn append(path: &Path) -> Option<File> {

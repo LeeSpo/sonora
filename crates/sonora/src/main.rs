@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use gpui::{
     App, AppContext as _, Bounds, Pixels, QuitMode, Size, TitlebarOptions, WindowBounds,
-    WindowOptions, point, px, size,
+    WindowOptions, px, size,
 };
 use music::LyricsProvider;
 use router::Screen;
@@ -128,6 +128,8 @@ fn main() {
         state::init(cx, io, database, providers, local_provider, lyrics);
         #[cfg(target_os = "windows")]
         state::install_rounded_window_hook(set_corner_preference, cx);
+        #[cfg(target_os = "macos")]
+        state::install_rounded_window_hook(set_toolbar_style, cx);
         let opened_a_destination = opened_start.is_some();
         let start = opened_start.unwrap_or_else(|| {
             let startup = Sonora::global(cx).settings.read(cx).startup().to_owned();
@@ -311,6 +313,7 @@ fn open_window(cx: &mut App) {
         playback,
         potoken: _,
         queue,
+        requirements: _,
         scan: _,
         scrobbling: _,
         settings: _,
@@ -337,6 +340,10 @@ fn open_window(cx: &mut App) {
     let saver = settings.saver();
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let decorations = settings.window_decorations();
+    #[cfg(target_os = "macos")]
+    let traffic_lights = views::traffic_lights(settings, cx.theme().metrics.title_bar);
+    #[cfg(not(target_os = "macos"))]
+    let traffic_lights = gpui::point(px(9.), px(9.));
     let look = settings.look();
     let background = ui::backdrop(look.blur_window, look.transparent);
 
@@ -348,11 +355,12 @@ fn open_window(cx: &mut App) {
             titlebar: Some(TitlebarOptions {
                 title: Some("Sonora".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(9.), px(9.))),
+                traffic_light_position: Some(traffic_lights),
             }),
             inactive_frame_interval: saver.interval(),
             is_movable: true,
             is_resizable: true,
+            app_owns_titlebar_drag: true,
             app_id: Some("sonora".into()),
             window_min_size: Some(LEAST_SIZE),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -408,6 +416,51 @@ fn set_corner_preference(window: &gpui::Window, rounding: ui::Rounding) {
             &preference as *const _ as *const std::ffi::c_void,
             size_of_val(&preference) as u32,
         );
+    }
+}
+
+/// Sizes the window's corners through the toolbar style, the one control AppKit offers over them:
+/// a window without a toolbar gets the smallest radius, a compact toolbar a larger one and a
+/// unified toolbar the largest. The toolbar stays empty, so only the frame changes. Before
+/// macOS 26 every style shares one radius.
+#[cfg(target_os = "macos")]
+fn set_toolbar_style(window: &gpui::Window, rounding: ui::Rounding) {
+    use objc2::{MainThreadMarker, MainThreadOnly as _};
+    use objc2_app_kit::{NSToolbar, NSView, NSWindowToolbarStyle};
+    use objc2_foundation::NSString;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return log::warn!("window: toolbar style changed off the main thread");
+    };
+    let Ok(RawWindowHandle::AppKit(handle)) =
+        HasWindowHandle::window_handle(window).map(|handle| handle.as_raw())
+    else {
+        return;
+    };
+    // SAFETY: GPUI hands out its live `NSView` for the window, and this runs on the main thread.
+    let view: &NSView = unsafe { handle.ns_view.cast::<NSView>().as_ref() };
+    let Some(native) = view.window() else {
+        return;
+    };
+
+    let style = match rounding {
+        ui::Rounding::Square | ui::Rounding::Subtle => None,
+        ui::Rounding::Rounded => Some(NSWindowToolbarStyle::UnifiedCompact),
+        ui::Rounding::Round => Some(NSWindowToolbarStyle::Unified),
+    };
+    match style {
+        None => native.setToolbar(None),
+        Some(style) => {
+            if native.toolbar().is_none() {
+                let toolbar = NSToolbar::initWithIdentifier(
+                    NSToolbar::alloc(mtm),
+                    &NSString::from_str("sonora.corners"),
+                );
+                native.setToolbar(Some(&toolbar));
+            }
+            native.setToolbarStyle(style);
+        }
     }
 }
 

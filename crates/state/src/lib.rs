@@ -19,6 +19,7 @@ mod potoken;
 mod profile;
 mod queue;
 mod remote;
+mod requirements;
 mod scan;
 mod scrobble;
 mod search;
@@ -53,6 +54,7 @@ pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;
 pub use queue::{Named, Queue, Resume, Stub};
 pub use remote::{Remote, attach as attach_remote};
+pub use requirements::{Requirement, Requirements};
 pub use scan::Scan;
 pub use scrobble::{ScrobbleRow, ScrobbleState, Scrobbling};
 pub use search::{AlbumHit, ArtistHit, Hit, Kind, PlaylistHit, Search};
@@ -179,6 +181,7 @@ pub struct Sonora {
     /// that it keeps ticking.
     pub potoken: Entity<potoken::PoToken>,
     pub queue: Entity<Queue>,
+    pub requirements: Entity<Requirements>,
     pub scan: Entity<Scan>,
     pub scrobbling: Entity<Scrobbling>,
     pub settings: Entity<AppSettings>,
@@ -268,6 +271,15 @@ pub fn init(
     let cover = cx.new(|cx| Cover::new(session.clone(), playback.clone(), io.clone(), cx));
     let drm = cx.new(|cx| Drm::new(session.clone(), io.clone(), cx));
     let updates = cx.new(|cx| Updates::new(settings.clone(), io.clone(), cx));
+    let requirements = cx.new(|cx| {
+        Requirements::new(
+            settings.clone(),
+            session.clone(),
+            playback.clone(),
+            io.clone(),
+            cx,
+        )
+    });
     let usage = cx.new(|cx| Usage::new(session.clone(), database, io.clone(), cx));
     let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
     let potoken = potoken::attach(cx);
@@ -294,6 +306,7 @@ pub fn init(
         playback,
         potoken,
         queue,
+        requirements,
         scan,
         scrobbling,
         settings,

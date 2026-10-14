@@ -13,6 +13,7 @@
 //! reader asks for it. Everything else, the waiting and the seeking and what a broken
 //! connection does, is the same for all of them and lives here.
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::future::Future;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -107,6 +108,8 @@ impl Source for reqwest::Response {
 /// memory when no such file can be made or written or the body is [`Body::confidential`].
 pub struct Spool {
     len: usize,
+    /// The body length the server announced, which a body can size its own bookkeeping by.
+    announced: Option<usize>,
     store: Store,
 }
 
@@ -121,6 +124,7 @@ impl Spool {
         match spool_file() {
             Ok(file) => Self {
                 len: 0,
+                announced: announced(total),
                 store: Store::File(file),
             },
             Err(error) => {
@@ -130,13 +134,21 @@ impl Spool {
         }
     }
 
-    /// A spool in memory, with room reserved for `total` bytes when that is known.
+    /// A spool in memory, with room reserved for `total` bytes when that is known and for the
+    /// preroll when it is not. A body of unknown length then starts out big enough to be mapped
+    /// on its own, rather than growing through a run of heap blocks that each leave a hole.
     pub(crate) fn in_memory(total: Option<u64>) -> Self {
-        let room = total.map_or(0, |total| usize::try_from(total).unwrap_or(CEILING));
+        let room = total.map_or(PREROLL, |total| usize::try_from(total).unwrap_or(CEILING));
         Self {
             len: 0,
+            announced: announced(total),
             store: Store::Memory(Vec::with_capacity(room.min(CEILING))),
         }
+    }
+
+    /// The body length the server announced, if it did.
+    pub fn announced(&self) -> Option<usize> {
+        self.announced
     }
 
     /// How many bytes have arrived.
@@ -165,6 +177,18 @@ impl Spool {
         let mut out = vec![0; range.end.saturating_sub(range.start)];
         self.read_at(range.start, &mut out)?;
         Ok(out)
+    }
+
+    /// The bytes of `range`, which must lie within what has arrived. A spool in memory lends
+    /// them where they are, and only one on disk pays for a copy.
+    pub fn view(&self, range: Range<usize>) -> io::Result<Cow<'_, [u8]>> {
+        match &self.store {
+            Store::Memory(held) => {
+                let end = self.check(range.start, range.end.saturating_sub(range.start))?;
+                Ok(Cow::Borrowed(&held[range.start..end]))
+            }
+            Store::File(_) => self.bytes(range).map(Cow::Owned),
+        }
     }
 
     /// Overwrites the bytes at `at` with `bytes`, which must lie within what has arrived.
@@ -653,6 +677,13 @@ impl<B: Body> Seek for Reader<B> {
         self.at = target as u64;
         Ok(self.at)
     }
+}
+
+/// An announced body length as a size, when it fits under the ceiling.
+fn announced(total: Option<u64>) -> Option<usize> {
+    total
+        .and_then(|total| usize::try_from(total).ok())
+        .filter(|total| *total <= CEILING)
 }
 
 /// A file in Sonora's cache directory with no name, so nothing is left behind however the

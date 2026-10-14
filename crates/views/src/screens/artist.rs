@@ -743,6 +743,9 @@ impl ArtistView {
                     .into_any_element()
             },
         )]
+        .into_iter()
+        .map(|rail| div().pt_6().child(rail).into_any_element())
+        .collect()
     }
 
     fn listed(&self, cx: &mut Context<Self>) -> AnyElement {

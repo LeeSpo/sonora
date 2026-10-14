@@ -691,7 +691,6 @@ update-detail = Anda menggunakan versi { $running }. Baca perubahannya, atau per
 update-detail-notes = Anda menggunakan versi { $running }. Baca perubahannya, lalu perbarui Sonora sesuai cara Anda memasangnya.
 update-notes = Yang baru
 update-now = Perbarui
-update-later = Nanti
 update-working = Mengunduh pembaruan…
 update-failed = Pembaruan tidak dapat dipasang. Coba lagi dari halaman rilis GitHub.
 settings-check-updates = Periksa pembaruan

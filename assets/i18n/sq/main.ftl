@@ -806,7 +806,6 @@ update-detail = Je te { $running }. Lexo çfarë ndryshoi, ose përditëso tani.
 update-detail-notes = Je te { $running }. Lexo çfarë ndryshoi, pastaj përditëso Sonora ashtu si e instalove.
 update-notes = Çfarë ka të re
 update-now = Përditëso
-update-later = Më vonë
 update-working = Duke shkarkuar përditësimin…
 update-failed = Përditësimi nuk mund të instalohej. Provo përsëri nga faqja e publikimeve.
 settings-check-updates = Kontrollo për përditësime

@@ -1,5 +1,6 @@
 mod language;
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -127,7 +128,11 @@ fn format(language: Language, key: &str, args: Option<&FluentArgs>) -> Option<Sh
     for error in &errors {
         log::warn!("i18n: cannot format {key}: {error}");
     }
-    Some(SharedString::from(text.into_owned()))
+    // The bundles are never dropped, so a message with nothing to fill in is shared as is.
+    Some(match text {
+        Cow::Borrowed(text) => SharedString::new_static(text),
+        Cow::Owned(text) => SharedString::from(text),
+    })
 }
 
 fn bundle(language: Language) -> FluentBundle<FluentResource> {

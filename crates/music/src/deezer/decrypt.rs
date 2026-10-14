@@ -93,14 +93,17 @@ impl Striped {
 }
 
 impl crate::stream::Body for Striped {
+    /// Decrypts every whole block in place where it sits in `pending`, then moves them out in
+    /// one go, so a chunk costs no buffer of its own however many blocks it holds.
     fn feed(&mut self, chunk: &[u8], out: &mut Vec<u8>) {
         self.pending.extend_from_slice(chunk);
-        while self.pending.len() >= BLOCK {
-            let mut block: Vec<u8> = self.pending.drain(..BLOCK).collect();
-            self.cipher.decrypt_block(&mut block, self.blocks);
+        let whole = self.pending.len() - self.pending.len() % BLOCK;
+        for block in self.pending[..whole].as_chunks_mut::<BLOCK>().0 {
+            self.cipher.decrypt_block(block, self.blocks);
             self.blocks += 1;
-            out.extend_from_slice(&block);
         }
+        out.extend_from_slice(&self.pending[..whole]);
+        self.pending.drain(..whole);
     }
 
     fn flush(&mut self, out: &mut Vec<u8>) {

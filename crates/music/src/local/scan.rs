@@ -14,7 +14,8 @@ const SEPARATORS: [char; 8] = ['-', '–', '—', '.', '_', '·', ':', ' '];
 const MAX_READERS: usize = 8;
 
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "wv", "ape", "webm", "mka",
+    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav", "aiff", "aif", "aifc", "wv",
+    "ape", "webm", "mka",
 ];
 
 #[derive(Default)]

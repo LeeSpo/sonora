@@ -7,6 +7,81 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-13
+
+### Added
+
+- On macOS, you can pick how rounded the window's corners are in Settings, using the corner
+  sizes macOS gives its own windows. You can also hide the close, minimize and zoom buttons.
+- Songs in your history show a heart when you hover them, so you can save one to your library
+  straight from there.
+- Ctrl and + or - make the text bigger or smaller, and Ctrl+0 puts it back to the default
+  size. On macOS it is Cmd. The size is saved just like the one in Settings.
+
+### Changed
+
+- Fullscreen lyrics grow with a large window, up to twice their size, so they no longer look
+  small on a big screen. Small windows keep the size they had.
+- On Windows, the minimize, maximize, restore and close buttons now use Windows' own icons, so
+  they match other Windows apps.
+- Sonora uses less memory while your Apple Music library loads at startup, and it no longer
+  frees memory in the background every few seconds to stay small.
+- On Linux, Sonora tells you when it cannot be heard because pipewire-alsa or pulseaudio-alsa
+  is missing, or when browser sign-in needs webkit2gtk-4.1, and names what to install.
+- Every notice in the corner, the update one included, has a Don't show again button. On the
+  update notice it turns off Check for updates.
+
+### Fixed
+
+- YouTube Music and Apple Music artist pages now list the artist's whole discography instead
+  of stopping at ten albums and ten singles, and Deezer artist pages no longer stop at 50.
+- Apple Music artist pages now list the artist's live albums and compilations, which were
+  missing even though they opened fine from search. Every edition of an album shows up too,
+  such as the standard and deluxe releases side by side, newest first.
+- Albums on YouTube Music and Deezer artist pages now name the artist, and a card with no
+  artist to show no longer ends its line in a stray dot.
+- Artist names on Apple Music album cards now open the artist, in search, charts, home, the
+  library and on artist pages.
+- Top songs on Apple Music charts now show and play as songs instead of album cards.
+- The Appears on row of an artist page no longer sits flush against the Show all button.
+- Dragging a track to the top of the queue now moves it whenever the drop line shows, even if
+  you let go over the Up next heading or between two rows.
+- Seeking in the last few seconds of a song now moves within that song, instead of jumping into
+  the next one or doing nothing.
+- The fullscreen controls blur away as they hide, instead of leaving the top of the seek bar cut
+  off for the last moment.
+- Signing in to Spotify on Windows on ARM no longer fails with "Spotify turned down the
+  sign-in".
+- Spotify and Deezer accounts now show profile picture in Settings instead of initials.
+- Spotify playlists that someone else owns but lets you edit can now be edited in Sonora, so
+  you can add and remove their songs.
+- A song no longer gets stuck on plain lyrics because a lyrics source was down the first time
+  it played. Sources that failed are asked again on the next play, and turning a source off
+  no longer looks the song up again.
+
+## [0.42.2] - 2026-10-07
+
+### Added
+
+- Press F11 or double-click the fullscreen view to make the window fill the whole screen. Turn on
+  Use OS fullscreen in settings to have the fullscreen button do the same.
+- AIFF files in a local library now show up and play, including `.aif` and `.aifc`. Opening one
+  from the file manager works too.
+
+### Fixed
+
+- Sonora no longer freezes for a moment every second when your audio output cannot be opened.
+  It waits quietly and picks the output up as soon as it works.
+- The queue's "From" line and the pause button on album, playlist and artist cards and pins now
+  follow the track that is playing, so an album you queue after another one shows as the source
+  once it starts. When radio takes over, the queue names the song the radio comes from.
+- On macOS, the title bar double-click action now follows System Settings instead of always zooming,
+  and no longer fires when you double-click a button.
+- YouTube Music tracks no longer skip to the next song at 1:04 when they start before Sonora
+  has its YouTube token ready.
+- Fullscreen shows a local song's own embedded cover instead of the cover of another song
+  from the same album.
+
 ## [0.42.1] - 2026-10-02
 
 ### Added
@@ -1984,7 +2059,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Initial release: a native Spotify client with playback, an interactive queue, the saved library,
 search, album, playlist, artist and song pages, context menus and adaptive theming.
 
-[unreleased]: https://github.com/sonorahq/sonora/compare/v0.42.1...HEAD
+[unreleased]: https://github.com/sonorahq/sonora/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/sonorahq/sonora/compare/v0.42.2...v0.43.0
+[0.42.2]: https://github.com/sonorahq/sonora/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/sonorahq/sonora/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/sonorahq/sonora/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/sonorahq/sonora/compare/v0.40.0...v0.41.0

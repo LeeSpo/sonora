@@ -82,7 +82,9 @@ pub fn instrumental(query: &LyricsQuery, hits: &[LyricsHit]) -> bool {
     matching().any(|hit| hit.instrumental) && !matching().any(|hit| !hit.lyrics.is_empty())
 }
 
-fn matched(query: &LyricsQuery, hit: &LyricsHit) -> bool {
+/// Whether a hit is for the queried track at all: the same title and artist, and a length close
+/// enough when both are known. Ranking and the instrumental check never look at any other hit.
+pub fn matched(query: &LyricsQuery, hit: &LyricsHit) -> bool {
     if !alike(&hit.title, &query.title) || !artists_alike(&hit.artist, &query.artist) {
         return false;
     }
@@ -170,29 +172,43 @@ fn stretched_shout(text: &str) -> bool {
     uppercase && !lowercase && longest >= 3
 }
 
+/// What two sheets share when they are the same lyrics: their letters and digits, lowercased,
+/// behind what kind of sheet they are. It is written into one buffer sized for the whole sheet.
 fn fingerprint(lyrics: &Lyrics) -> String {
-    let trim = |text: &str| {
-        text.chars()
-            .filter(|letter| letter.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .collect::<String>()
+    let trim = |print: &mut String, text: &str| {
+        print.extend(
+            text.chars()
+                .filter(|letter| letter.is_alphanumeric())
+                .flat_map(char::to_lowercase),
+        );
     };
     match lyrics {
-        Lyrics::Plain { text, .. } => format!("plain:{}", trim(text)),
+        Lyrics::Plain { text, .. } => {
+            let mut print = String::with_capacity(text.len() + 6);
+            print.push_str("plain:");
+            trim(&mut print, text);
+            print
+        }
         Lyrics::Synced { lines } => {
             let worded = lines.iter().any(LyricsLine::worded);
-            let text: String = lines
-                .iter()
-                .flat_map(|line| {
+            let texts = || {
+                lines.iter().flat_map(|line| {
                     std::iter::once(line.text.as_str()).chain(
                         line.secondary
                             .iter()
                             .map(|secondary| secondary.text.as_str()),
                     )
                 })
-                .map(trim)
-                .collect();
-            format!("synced:{worded}:{text}")
+            };
+            let mut print = String::with_capacity(texts().map(str::len).sum::<usize>() + 13);
+            print.push_str(match worded {
+                true => "synced:true:",
+                false => "synced:false:",
+            });
+            for text in texts() {
+                trim(&mut print, text);
+            }
+            print
         }
     }
 }

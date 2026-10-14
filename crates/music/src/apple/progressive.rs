@@ -40,6 +40,10 @@ const BOX_HEADER: usize = 16;
 /// for a moment, so a read on the audio thread never queues behind a run of them.
 const PACE: Duration = Duration::from_micros(500);
 
+/// The fewest bytes a sample is assumed to hold when sizing the index, which caps what a
+/// first fragment of implausibly small samples can make it reserve.
+const MIN_SAMPLE: usize = 64;
+
 /// Reads that start this far from the end never wait. A decoder probing for the end of the file
 /// would otherwise hold playback until the whole track had downloaded.
 const TAIL: u64 = 8 * 1024;
@@ -125,6 +129,9 @@ pub struct Cenc {
     /// cleartext through the cipher again would corrupt it.
     seals: Vec<Seal>,
     license: License,
+    /// Holds one sample on its way through the CDM. It is kept between samples, so decrypting
+    /// a track allocates once rather than once a sample.
+    scratch: Vec<u8>,
     /// How many samples have gone through the CDM, and how long that took. Playback pays this
     /// as it reads, so when a track is slow to start these two numbers say whether the CDM is
     /// the reason.
@@ -155,7 +162,7 @@ impl Cenc {
                 },
                 _ => end,
             };
-            let Ok(window) = spool.bytes(self.walked..end) else {
+            let Ok(window) = spool.view(self.walked..end) else {
                 break;
             };
             match cenc::read_fragment(&window, self.walked, &self.tracks) {
@@ -170,6 +177,9 @@ impl Cenc {
                             start,
                         });
                     }
+                    if self.samples.is_empty() {
+                        self.reserve(spool.announced(), samples.len(), next - self.walked);
+                    }
                     self.seals
                         .resize(self.samples.len() + samples.len(), Seal::Encrypted);
                     self.samples.extend(samples);
@@ -179,6 +189,22 @@ impl Cenc {
                 Step::Partial => break,
             }
         }
+    }
+
+    /// Makes room for every sample of the track, going by how densely the first fragment, of
+    /// `span` bytes, packed its `found` samples. A track of unknown length is left to grow.
+    ///
+    /// Growing the index a fragment at a time would leave a trail of freed, ever larger copies
+    /// in the heap. A guess on the high side costs only address space, since an index this big
+    /// is mapped and the pages it never fills are never touched.
+    fn reserve(&mut self, total: Option<usize>, found: usize, span: usize) {
+        let (Some(total), Some(start)) = (total, self.init_end) else {
+            return;
+        };
+        let fragments = total.saturating_sub(start).div_ceil(span.max(1));
+        let expected = found.saturating_mul(fragments + 1).min(total / MIN_SAMPLE);
+        self.samples.reserve_exact(expected);
+        self.seals.reserve_exact(expected);
     }
 
     /// Reads the init segment once `moov` has arrived whole, relabels its sample entry in the
@@ -267,15 +293,18 @@ impl Cenc {
         };
         let sample = &self.samples[index];
         let span = sample.start..sample.end();
-        let Ok(mut bytes) = spool.bytes(span.clone()) else {
+        let bytes = &mut self.scratch;
+        bytes.clear();
+        bytes.resize(span.len(), 0);
+        if spool.read_at(span.start, bytes).is_err() {
             return Err(io::Error::other("a sample runs past the track"));
-        };
+        }
         let began = Instant::now();
         keys.cdm
-            .decrypt(&mut bytes, &keys.key_id, &sample.iv, &sample.subs)
+            .decrypt(bytes, &keys.key_id, &sample.iv, &sample.subs)
             .map_err(|error| io::Error::other(format!("{error:#}")))?;
         let took = began.elapsed();
-        if let Err(error) = spool.write_at(span.start, &bytes) {
+        if let Err(error) = spool.write_at(span.start, bytes) {
             self.seals[index] = Seal::Lost;
             log::error!("apple: cannot keep the cleartext of sample {index}: {error}");
             return Err(error);
@@ -548,7 +577,7 @@ mod tests {
                 start: 16,
                 len: 16,
                 iv: [0; 16],
-                subs: Vec::new(),
+                subs: Default::default(),
             }],
             seals: vec![Seal::Encrypted],
             ..Cenc::default()

@@ -56,13 +56,15 @@ impl Cache {
         }
     }
 
-    pub fn read(&self, key: &str) -> Result<Option<String>> {
+    /// The value under `key` as `read` makes of it. `read` sees the text where sqlite holds it,
+    /// so a snapshot of many megabytes is never copied before it is parsed.
+    pub fn read<T>(&self, key: &str, read: impl FnOnce(&str) -> T) -> Result<Option<T>> {
         let connection = self.open()?;
         connection
             .query_row(
                 "SELECT value FROM snapshots WHERE key = ?",
                 params![key],
-                |row| row.get(0),
+                |row| Ok(read(row.get_ref(0)?.as_str()?)),
             )
             .optional()
             .context("cannot read a cached value")

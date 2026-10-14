@@ -618,7 +618,7 @@ fn queue_item(
     icon: &'static str,
     queued: &[Track],
     one: fn(&mut Playback, Track, &mut Context<Playback>),
-    many: fn(&mut Playback, Vec<Track>, &mut Context<Playback>),
+    many: fn(&mut Playback, Vec<Track>, Option<Origin>, &mut Context<Playback>),
 ) -> MenuItem {
     let item = MenuItem::new(id, label).icon(icon);
     if queued.is_empty() {
@@ -629,7 +629,7 @@ fn queue_item(
         let playback = Sonora::global(cx).playback.clone();
         playback.update(cx, |playback, cx| match queued.len() {
             1 => one(playback, queued[0].clone(), cx),
-            _ => many(playback, queued.clone(), cx),
+            _ => many(playback, queued.clone(), None, cx),
         });
     })
 }
@@ -805,9 +805,10 @@ pub(crate) fn album_menu(
     cx: &App,
 ) -> Menu {
     let album_id = album.id.clone();
-    let next = album_id.clone();
-    let queued = album_id.clone();
-    let last = album_id.clone();
+    let from = Origin::album(album_id.clone()).named(album.name.clone());
+    let next = from.clone();
+    let queued = from.clone();
+    let last = from;
     let copied = album_id.clone();
     let nexting = playback.clone();
     let queueing = playback.clone();
@@ -835,17 +836,23 @@ pub(crate) fn album_menu(
                 MenuItem::new("play-album-next", t!("menu-play-next"))
                     .icon("icons/list-start.svg")
                     .on_click(move |_, _, cx| {
-                        nexting.update(cx, |playback, cx| playback.play_album_next(&next, cx));
+                        nexting.update(cx, |playback, cx| {
+                            playback.play_album_next(next.clone(), cx)
+                        });
                     }),
                 MenuItem::new("enqueue-album", t!("menu-add-to-queue"))
                     .icon("icons/list-plus.svg")
                     .on_click(move |_, _, cx| {
-                        queueing.update(cx, |playback, cx| playback.enqueue_album(&queued, cx));
+                        queueing.update(cx, |playback, cx| {
+                            playback.enqueue_album(queued.clone(), cx)
+                        });
                     }),
                 MenuItem::new("play-album-last", t!("menu-play-last"))
                     .icon("icons/list-end.svg")
                     .on_click(move |_, _, cx| {
-                        lasting.update(cx, |playback, cx| playback.play_album_last(&last, cx));
+                        lasting.update(cx, |playback, cx| {
+                            playback.play_album_last(last.clone(), cx)
+                        });
                     }),
             ],
             vec![
@@ -898,9 +905,9 @@ pub(crate) fn artist_menu(
     let artist_id = artist.id.clone();
     let opened = artist_id.clone();
     let played = Origin::artist(artist_id.clone()).named(artist.name.clone());
-    let next = artist_id.clone();
-    let queued = artist_id.clone();
-    let last = artist_id.clone();
+    let next = played.clone();
+    let queued = played.clone();
+    let last = played.clone();
     let copied = artist_id.clone();
     let playing = playback.clone();
     let nexting = playback.clone();
@@ -929,17 +936,23 @@ pub(crate) fn artist_menu(
                 MenuItem::new("play-artist-next", t!("menu-play-next"))
                     .icon("icons/list-start.svg")
                     .on_click(move |_, _, cx| {
-                        nexting.update(cx, |playback, cx| playback.play_artist_next(&next, cx));
+                        nexting.update(cx, |playback, cx| {
+                            playback.play_artist_next(next.clone(), cx)
+                        });
                     }),
                 MenuItem::new("enqueue-artist", t!("menu-add-to-queue"))
                     .icon("icons/list-plus.svg")
                     .on_click(move |_, _, cx| {
-                        queueing.update(cx, |playback, cx| playback.enqueue_artist(&queued, cx));
+                        queueing.update(cx, |playback, cx| {
+                            playback.enqueue_artist(queued.clone(), cx)
+                        });
                     }),
                 MenuItem::new("play-artist-last", t!("menu-play-last"))
                     .icon("icons/list-end.svg")
                     .on_click(move |_, _, cx| {
-                        lasting.update(cx, |playback, cx| playback.play_artist_last(&last, cx));
+                        lasting.update(cx, |playback, cx| {
+                            playback.play_artist_last(last.clone(), cx)
+                        });
                     }),
             ],
             artist_library_item(artist.clone(), cx)
@@ -995,9 +1008,10 @@ fn artist_library_item(artist: SavedArtist, cx: &App) -> Option<MenuItem> {
 }
 
 pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: &App) -> Menu {
-    let next = playlist.id.clone();
-    let queued = playlist.id.clone();
-    let last = playlist.id.clone();
+    let from = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
+    let next = from.clone();
+    let queued = from.clone();
+    let last = from;
     let copied = playlist.id.clone();
     let nexting = playback.clone();
     let queueing = playback.clone();
@@ -1054,17 +1068,23 @@ pub(crate) fn playlist_menu(playlist: Playlist, playback: Entity<Playback>, cx: 
                 MenuItem::new("play-playlist-next", t!("menu-play-next"))
                     .icon("icons/list-start.svg")
                     .on_click(move |_, _, cx| {
-                        nexting.update(cx, |playback, cx| playback.play_playlist_next(&next, cx));
+                        nexting.update(cx, |playback, cx| {
+                            playback.play_playlist_next(next.clone(), cx)
+                        });
                     }),
                 MenuItem::new("enqueue-playlist", t!("menu-add-to-queue"))
                     .icon("icons/list-plus.svg")
                     .on_click(move |_, _, cx| {
-                        queueing.update(cx, |playback, cx| playback.enqueue_playlist(&queued, cx));
+                        queueing.update(cx, |playback, cx| {
+                            playback.enqueue_playlist(queued.clone(), cx)
+                        });
                     }),
                 MenuItem::new("play-playlist-last", t!("menu-play-last"))
                     .icon("icons/list-end.svg")
                     .on_click(move |_, _, cx| {
-                        lasting.update(cx, |playback, cx| playback.play_playlist_last(&last, cx));
+                        lasting.update(cx, |playback, cx| {
+                            playback.play_playlist_last(last.clone(), cx)
+                        });
                     }),
             ],
             actions,
@@ -1164,9 +1184,9 @@ fn open_key(kind: PinKind) -> Option<&'static str> {
 
 fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
     let played = Origin::from(pin);
-    let next = pin.id.clone();
-    let queued = pin.id.clone();
-    let last = pin.id.clone();
+    let next = played.clone();
+    let queued = played.clone();
+    let last = played.clone();
     let nexting = playback.clone();
     let queueing = playback.clone();
     let lasting = playback.clone();
@@ -1176,34 +1196,46 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
             MenuItem::new("play-pin-next", t!("menu-play-next"))
                 .icon("icons/list-start.svg")
                 .on_click(move |_, _, cx| {
-                    nexting.update(cx, |playback, cx| playback.play_album_next(&next, cx));
+                    nexting.update(cx, |playback, cx| {
+                        playback.play_album_next(next.clone(), cx)
+                    });
                 }),
             MenuItem::new("enqueue-pin", t!("menu-add-to-queue"))
                 .icon("icons/list-plus.svg")
                 .on_click(move |_, _, cx| {
-                    queueing.update(cx, |playback, cx| playback.enqueue_album(&queued, cx));
+                    queueing.update(cx, |playback, cx| {
+                        playback.enqueue_album(queued.clone(), cx)
+                    });
                 }),
             MenuItem::new("play-pin-last", t!("menu-play-last"))
                 .icon("icons/list-end.svg")
                 .on_click(move |_, _, cx| {
-                    lasting.update(cx, |playback, cx| playback.play_album_last(&last, cx));
+                    lasting.update(cx, |playback, cx| {
+                        playback.play_album_last(last.clone(), cx)
+                    });
                 }),
         ],
         PinKind::Playlist => vec![
             MenuItem::new("play-pin-next", t!("menu-play-next"))
                 .icon("icons/list-start.svg")
                 .on_click(move |_, _, cx| {
-                    nexting.update(cx, |playback, cx| playback.play_playlist_next(&next, cx));
+                    nexting.update(cx, |playback, cx| {
+                        playback.play_playlist_next(next.clone(), cx)
+                    });
                 }),
             MenuItem::new("enqueue-pin", t!("menu-add-to-queue"))
                 .icon("icons/list-plus.svg")
                 .on_click(move |_, _, cx| {
-                    queueing.update(cx, |playback, cx| playback.enqueue_playlist(&queued, cx));
+                    queueing.update(cx, |playback, cx| {
+                        playback.enqueue_playlist(queued.clone(), cx)
+                    });
                 }),
             MenuItem::new("play-pin-last", t!("menu-play-last"))
                 .icon("icons/list-end.svg")
                 .on_click(move |_, _, cx| {
-                    lasting.update(cx, |playback, cx| playback.play_playlist_last(&last, cx));
+                    lasting.update(cx, |playback, cx| {
+                        playback.play_playlist_last(last.clone(), cx)
+                    });
                 }),
         ],
         PinKind::Artist => vec![
@@ -1215,17 +1247,23 @@ fn transport_items(pin: &Pin, playback: Entity<Playback>) -> Vec<MenuItem> {
             MenuItem::new("play-pin-next", t!("menu-play-next"))
                 .icon("icons/list-start.svg")
                 .on_click(move |_, _, cx| {
-                    nexting.update(cx, |playback, cx| playback.play_artist_next(&next, cx));
+                    nexting.update(cx, |playback, cx| {
+                        playback.play_artist_next(next.clone(), cx)
+                    });
                 }),
             MenuItem::new("enqueue-pin", t!("menu-add-to-queue"))
                 .icon("icons/list-plus.svg")
                 .on_click(move |_, _, cx| {
-                    queueing.update(cx, |playback, cx| playback.enqueue_artist(&queued, cx));
+                    queueing.update(cx, |playback, cx| {
+                        playback.enqueue_artist(queued.clone(), cx)
+                    });
                 }),
             MenuItem::new("play-pin-last", t!("menu-play-last"))
                 .icon("icons/list-end.svg")
                 .on_click(move |_, _, cx| {
-                    lasting.update(cx, |playback, cx| playback.play_artist_last(&last, cx));
+                    lasting.update(cx, |playback, cx| {
+                        playback.play_artist_last(last.clone(), cx)
+                    });
                 }),
         ],
         PinKind::Song => vec![

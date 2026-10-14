@@ -1,8 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use gpui::{FontFeatures, SharedString};
 use i18n::t;
+
+/// Built once and shared, since every clock and number column on screen asks for it each frame.
+static TABULAR: LazyLock<FontFeatures> =
+    LazyLock::new(|| FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
 
 pub fn clock(value: Duration) -> SharedString {
     let total = value.as_secs();
@@ -32,5 +36,5 @@ pub fn runtime(value: Duration) -> SharedString {
 /// Font features that give every digit the same width, so a column of clock
 /// values lines up like monospace text while staying in the UI font.
 pub fn tabular() -> FontFeatures {
-    FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
+    TABULAR.clone()
 }

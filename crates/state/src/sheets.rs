@@ -1,7 +1,6 @@
 //! The lyrics the services answered with, kept in the cache database one track at a time, so
 //! only the sheets something asks for are ever read into memory.
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,24 +8,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use music::{Lyrics as Sheet, LyricsHit};
 use serde::{Deserialize, Serialize};
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 const PASSING: bool = cfg!(debug_assertions);
 const CAPACITY: usize = 500;
 
-/// The single json file the sheets were kept in before they moved into the cache database.
-/// Read once, to move its entries over.
-#[derive(Deserialize)]
-struct Vault {
-    version: u32,
-    #[serde(default)]
-    entries: HashMap<String, Kept>,
-}
-
+/// Everything the services said about one track. A service in `answered` replied, even if it had
+/// nothing, so it is not asked again. One that failed is left out and gets asked next time.
 #[derive(Serialize, Deserialize)]
 struct Kept {
     stored: u64,
     #[serde(default)]
-    instrumental: bool,
+    answered: Vec<String>,
     #[serde(default)]
     hits: Vec<Held>,
 }
@@ -69,9 +61,13 @@ impl Sheets {
         Self { cache }
     }
 
-    /// The hits stored for `key` from the sources still in `known`, and whether the track was
-    /// found to be instrumental. `None` when nothing usable is stored.
-    pub(crate) fn get(&self, key: &str, known: &[&'static str]) -> Option<(Vec<LyricsHit>, bool)> {
+    /// The hits stored for `key` and the services that answered, limited to the sources in
+    /// `known`. `None` when nothing is stored.
+    pub(crate) fn get(
+        &self,
+        key: &str,
+        known: &[&'static str],
+    ) -> Option<(Vec<LyricsHit>, Vec<&'static str>)> {
         if PASSING {
             return None;
         }
@@ -83,22 +79,26 @@ impl Sheets {
         let kept: Kept = serde_json::from_str(&value)
             .inspect_err(|error| log::warn!("lyrics: cannot read the cached sheet: {error}"))
             .ok()?;
-        let instrumental = kept.instrumental;
-        let hits: Vec<LyricsHit> = kept
+        let answered = kept
+            .answered
+            .iter()
+            .filter_map(|source| known.iter().copied().find(|name| name == source))
+            .collect();
+        let hits = kept
             .hits
             .into_iter()
             .filter_map(|held| held.hit(known))
             .collect();
-        (!hits.is_empty() || instrumental).then_some((hits, instrumental))
+        Some((hits, answered))
     }
 
     /// An answer to store under `key`, stamped with the time it was found.
-    pub(crate) fn unsaved(key: String, hits: &[LyricsHit], instrumental: bool) -> Unsaved {
+    pub(crate) fn unsaved(key: String, hits: &[LyricsHit], answered: &[&'static str]) -> Unsaved {
         Unsaved {
             key,
             kept: Kept {
                 stored: now(),
-                instrumental,
+                answered: answered.iter().map(|name| (*name).to_owned()).collect(),
                 hits: hits.iter().map(Held::of).collect(),
             },
         }
@@ -114,37 +114,17 @@ impl Sheets {
         }
     }
 
-    /// Moves the sheets out of the old `lyrics.json` and deletes it. The file stays when the
-    /// move fails, so the next start tries again and nothing is lost.
+    /// Deletes the old `lyrics.json`. Its sheets were filed by which services were enabled, so
+    /// none of them can be read as one track's answer.
     pub(crate) fn migrate(&self) {
         if PASSING {
             return;
         }
         let path = legacy_path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => {
-                log::warn!("lyrics: cannot read {}: {error}", path.display());
-                return;
-            }
-        };
-        let vault: Option<Vault> = serde_json::from_slice(&bytes)
-            .inspect_err(|error| log::warn!("lyrics: cannot read the old cached sheets: {error}"))
-            .ok();
-        drop(bytes);
-        // A file of another version or one that does not parse was never going to be read
-        // again, which is what the single file did with it too.
-        if let Some(vault) = vault.filter(|vault| vault.version == VERSION) {
-            let moved = vault.entries.len();
-            if let Err(error) = self.keep(vault.entries) {
-                log::warn!("lyrics: cannot move the cached sheets: {error:#}");
-                return;
-            }
-            log::info!("lyrics: moved {moved} cached sheets into the cache database");
-        }
-        if let Err(error) = fs::remove_file(&path) {
-            log::warn!("lyrics: cannot remove {}: {error}", path.display());
+        match fs::remove_file(&path) {
+            Ok(()) => log::info!("lyrics: removed the old cached sheets"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => log::warn!("lyrics: cannot remove {}: {error}", path.display()),
         }
     }
 

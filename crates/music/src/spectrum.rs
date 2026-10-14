@@ -218,6 +218,8 @@ fn analyze(mut consumer: rtrb::Consumer<f32>, format: Arc<Format>, spectrum: Spe
     let mut frame = vec![0f32; channels];
     let mut lane_index = 0usize;
     let mut buffer = vec![Complex32::default(); FFT_SIZE];
+    // Held for the life of the analyzer, since `process` allocates a fresh one on every call.
+    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
     let mut empty = 0u32;
 
     loop {
@@ -277,7 +279,7 @@ fn analyze(mut consumer: rtrb::Consumer<f32>, format: Arc<Format>, spectrum: Spe
             for ((slot, sample), weight) in buffer.iter_mut().zip(side.samples).zip(&window) {
                 *slot = Complex32::new(sample * weight, 0.);
             }
-            fft.process(&mut buffer);
+            fft.process_with_scratch(&mut buffer, &mut scratch);
 
             for (band, edge) in edges.windows(2).enumerate() {
                 let lo = edge[0];

@@ -1,12 +1,16 @@
-use gpui::{App, Menu, MenuItem, OsAction};
+use gpui::{App, Context, Menu, MenuItem, OsAction};
 use i18n::t;
 use input::{
-    CloseWindow, Hide, HideOthers, MinimizeWindow, OpenSettings, Quit, RefreshLibrary, ShowAll,
-    SignOut, SongNext, SongPrevious, TogglePlayback, ToggleRepeat, ToggleShuffle, ZoomWindow,
+    CloseWindow, DecreaseFontSize, Hide, HideOthers, IncreaseFontSize, MinimizeWindow,
+    OpenSettings, Quit, RefreshLibrary, ResetFontSize, ShowAll, SignOut, SongNext, SongPrevious,
+    TogglePlayback, ToggleRepeat, ToggleShuffle, ZoomWindow,
 };
 use router::Destination;
-use state::{Shelf, Sonora};
-use ui::{Copy, Cut, Paste, SelectAll};
+use state::{AppSettings, Shelf, Sonora};
+use ui::{ActiveTheme as _, Copy, Cut, Look, Paste, SelectAll, Theme};
+
+/// How far one font size shortcut moves the size, the same step as the buttons in Settings.
+const FONT_STEP: f32 = 1.;
 
 pub fn register(lingers: bool, cx: &mut App) {
     cx.bind_keys(input::bindings());
@@ -75,6 +79,22 @@ pub fn register(lingers: bool, cx: &mut App) {
         playback.update(cx, |playback, cx| playback.toggle_repeat(cx));
     });
 
+    cx.on_action(|_: &IncreaseFontSize, cx: &mut App| {
+        change_font_size(cx, |settings, cx| {
+            settings.set_font_size(settings.font_size() + FONT_STEP, cx)
+        });
+    });
+
+    cx.on_action(|_: &DecreaseFontSize, cx: &mut App| {
+        change_font_size(cx, |settings, cx| {
+            settings.set_font_size(settings.font_size() - FONT_STEP, cx)
+        });
+    });
+
+    cx.on_action(|_: &ResetFontSize, cx: &mut App| {
+        change_font_size(cx, |settings, cx| settings.reset_font_size(cx));
+    });
+
     cx.set_menus(menus());
 }
 
@@ -128,4 +148,27 @@ fn menus() -> Vec<Menu> {
         });
     }
     menus
+}
+
+/// Applies `change` to the saved font size and redraws with it, keeping the cover tint the
+/// theme already wears so a shortcut does not undo the adaptive palette.
+fn change_font_size(
+    cx: &mut App,
+    change: impl FnOnce(&mut AppSettings, &mut Context<AppSettings>),
+) {
+    let settings = Sonora::global(cx).settings.clone();
+    settings.update(cx, change);
+    let (tint, tint_secondary) = (cx.theme().tint, cx.theme().tint_secondary);
+    let (look, overrides) = {
+        let settings = settings.read(cx);
+        (
+            Look {
+                tint,
+                tint_secondary,
+                ..settings.look()
+            },
+            settings.theme_overrides(),
+        )
+    };
+    Theme::set(look, &overrides, cx);
 }

@@ -832,7 +832,6 @@ update-detail = У вас { $running }. Посмотрите, что измен�
 update-detail-notes = У вас { $running }. Посмотрите, что изменилось, и обновите Sonora так же, как устанавливали.
 update-notes = Что нового
 update-now = Обновить
-update-later = Позже
 update-working = Загружаем обновление…
 update-failed = Не удалось установить обновление. Попробуйте со страницы релизов.
 settings-check-updates = Проверять обновления

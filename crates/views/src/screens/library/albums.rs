@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::io::Write as _;
 use ui::{ActiveTheme as _, Filter, FilterChange, FlagAxis, RangeAxis, Unit};
 
 use gpui::{AnyElement, App, Entity, SharedString, TextAlign};
@@ -133,18 +134,13 @@ impl AlbumSource {
 
     fn index_cell(&self, cell: &Cell<AlbumField>, album: &Album, cx: &App) -> AnyElement {
         let origin = Origin::album(album.id.clone()).named(album.name.clone());
-        let playing = self.playback.read(cx).playing_from(&origin);
+        let playing = self.playback.read(cx).playing_from(&origin, cx);
         let played = origin.clone();
         let album_id = album.id.clone();
         let album_name = album.name.clone();
         let press = cells::toggle(&self.playback, playing, move |playback, cx| {
             if Network::lost(cx)
-                && crate::shared::offline_play::start_album(
-                    playback,
-                    &album_id,
-                    &album_name,
-                    cx,
-                )
+                && crate::shared::offline_play::start_album(playback, &album_id, &album_name, cx)
             {
                 return;
             }
@@ -211,7 +207,7 @@ impl TableSource for AlbumSource {
     }
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
-        self.at(row, cx).is_some_and(|album| {
+        self.albums(cx).get(row).is_some_and(|album| {
             if self.starred && !self.favorites_only && !self.library.read(cx).saved_album(&album.id)
             {
                 return false;
@@ -229,7 +225,7 @@ impl TableSource for AlbumSource {
                     return false;
                 }
             }
-            hits(&album, query)
+            hits(album, query)
         })
     }
 
@@ -287,7 +283,7 @@ impl TableSource for AlbumSource {
     fn playing(&self, row: usize, cx: &App) -> bool {
         self.albums(cx).get(row).is_some_and(|album| {
             let origin = Origin::album(album.id.clone());
-            self.playback.read(cx).playing_from(&origin).is_some()
+            self.playback.read(cx).playing_from(&origin, cx).is_some()
         })
     }
 
@@ -395,7 +391,22 @@ fn hits(album: &Album, query: &str) -> bool {
     if query.is_empty() {
         return true;
     }
-    holds(&album.name, query) || holds(&album.artists, query) || holds(&year(album), query)
+    holds(&album.name, query) || holds(&album.artists, query) || year_holds(album, query)
+}
+
+/// Whether the album's year, as `year` prints it, holds the query. The digits are written on the
+/// stack, since a filter asks this of every album on every keystroke.
+fn year_holds(album: &Album, query: &str) -> bool {
+    if album.year <= 0 {
+        return query.is_empty();
+    }
+    let mut digits = [0u8; 12];
+    let mut cursor = std::io::Cursor::new(&mut digits[..]);
+    if write!(cursor, "{}", album.year).is_err() {
+        return false;
+    }
+    let written = cursor.position() as usize;
+    std::str::from_utf8(&digits[..written]).is_ok_and(|text| holds(text, query))
 }
 
 fn year(album: &Album) -> String {

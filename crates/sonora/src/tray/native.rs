@@ -157,7 +157,7 @@ impl Icon {
             log::warn!("tray: cannot set the tooltip: {error:#}");
         }
         self.caption.set_text(&shown.caption);
-        self.caption.set_icon(cover(shown.artwork.as_ref()));
+        self.caption.set_icon(cover(shown.artwork.as_deref()));
         self.caption.set_enabled(shown.song);
         self.toggle.set_text(&shown.toggle);
         self.previous.set_text(&shown.previous);

@@ -4,12 +4,11 @@
 //! waits on either.
 
 use std::num::NonZero;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use rodio::buffer::SamplesBuffer;
 use rodio::{ChannelCount, SampleRate, Source};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
@@ -19,6 +18,9 @@ use crate::audio::{Chain, Output};
 /// time; deeper rides out network hiccups, but the decoder's position runs this far ahead of
 /// what is heard.
 const QUEUED_CHUNKS: usize = 26;
+/// How many played-out sample buffers are kept for the next packets. A clear retires the whole
+/// queue at once, so this covers all of it and refilling after a seek allocates nothing.
+const SPARES: usize = QUEUED_CHUNKS + 2;
 /// How long a blocked write sleeps between looks at the queue.
 const DRAIN_POLL: Duration = Duration::from_millis(10);
 /// How often a write asks the system whether the default device changed.
@@ -141,25 +143,74 @@ impl Cue {
     }
 }
 
+/// A packet of interleaved samples at one rate, ready for the queue.
+pub struct Packet {
+    samples: Vec<f32>,
+    channels: ChannelCount,
+    rate: SampleRate,
+}
+
+/// Sample buffers that have played out, handed back to the decoder for its next packets, so
+/// steady playback reuses the same few buffers instead of allocating one per packet. The output
+/// callback only ever tries the lock, so it never waits on the decoder.
+#[derive(Clone)]
+struct Spares(Arc<Mutex<Vec<Vec<f32>>>>);
+
+impl Spares {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(Vec::with_capacity(SPARES))))
+    }
+
+    /// An empty buffer with room for `wanted` samples, a spare one when there is one.
+    fn take(&self, wanted: usize) -> Vec<f32> {
+        let spare = self.0.lock().unwrap_or_else(PoisonError::into_inner).pop();
+        let mut buffer = spare.unwrap_or_default();
+        buffer.clear();
+        buffer.reserve(wanted);
+        buffer
+    }
+
+    /// Keeps `buffer` for a later packet. It is freed instead when the lock is busy or enough
+    /// are kept already, and keeping one never allocates, because the list is sized up front.
+    fn keep(&self, buffer: Vec<f32>) {
+        if let Ok(mut spares) = self.0.try_lock()
+            && spares.len() < SPARES
+            && buffer.capacity() > 0
+        {
+            spares.push(buffer);
+        }
+    }
+}
+
 /// One packet in the output queue. It ends as soon as the cue moves on a generation and counts
-/// itself out when dropped, whichever way it went, so `live` is the number still queued.
+/// itself out when dropped, whichever way it went, so `live` is the number still queued. Its
+/// buffer goes back to the spares when it drops.
 struct Chunk {
-    samples: SamplesBuffer,
+    samples: Vec<f32>,
+    /// The next sample to hand out.
+    at: usize,
+    channels: ChannelCount,
+    rate: SampleRate,
     born: u32,
     generation: Arc<AtomicU32>,
     played: Arc<AtomicU64>,
     live: Arc<AtomicUsize>,
+    spares: Spares,
 }
 
 impl Chunk {
-    fn new(samples: SamplesBuffer, cue: &Cue, live: &Arc<AtomicUsize>) -> Self {
+    fn new(packet: Packet, cue: &Cue, live: &Arc<AtomicUsize>, spares: &Spares) -> Self {
         live.fetch_add(1, Ordering::Relaxed);
         Self {
-            samples,
+            samples: packet.samples,
+            at: 0,
+            channels: packet.channels,
+            rate: packet.rate,
             born: cue.generation.load(Ordering::Relaxed),
             generation: cue.generation.clone(),
             played: cue.played.clone(),
             live: live.clone(),
+            spares: spares.clone(),
         }
     }
 }
@@ -171,33 +222,43 @@ impl Iterator for Chunk {
         if self.generation.load(Ordering::Relaxed) != self.born {
             return None;
         }
-        let sample = self.samples.next()?;
+        let sample = *self.samples.get(self.at)?;
+        self.at += 1;
         self.played.fetch_add(1, Ordering::Relaxed);
         Some(sample)
     }
 }
 
 impl Source for Chunk {
+    /// The whole packet until its last sample is out, then nothing, the way a rodio
+    /// `SamplesBuffer` answers.
     fn current_span_len(&self) -> Option<usize> {
-        self.samples.current_span_len()
+        match self.at >= self.samples.len() {
+            true => Some(0),
+            false => Some(self.samples.len()),
+        }
     }
 
     fn channels(&self) -> ChannelCount {
-        self.samples.channels()
+        self.channels
     }
 
     fn sample_rate(&self) -> SampleRate {
-        self.samples.sample_rate()
+        self.rate
     }
 
     fn total_duration(&self) -> Option<Duration> {
-        self.samples.total_duration()
+        let nanos = 1_000_000_000u64.checked_mul(self.samples.len() as u64)?
+            / u64::from(self.rate.get())
+            / u64::from(self.channels.get());
+        Some(Duration::from_nanos(nanos))
     }
 }
 
 impl Drop for Chunk {
     fn drop(&mut self) {
         self.live.fetch_sub(1, Ordering::Relaxed);
+        self.spares.keep(std::mem::take(&mut self.samples));
     }
 }
 
@@ -209,6 +270,7 @@ pub struct Paced {
     cue: Cue,
     /// Chunks appended and not yet played out or retired.
     live: Arc<AtomicUsize>,
+    spares: Spares,
     changed: UnboundedSender<()>,
     checked_at: Instant,
 }
@@ -223,6 +285,7 @@ impl Paced {
             output,
             cue,
             live: Arc::default(),
+            spares: Spares::new(),
             changed,
             checked_at: Instant::now(),
         })
@@ -244,20 +307,28 @@ impl Paced {
         self.output.set_volume(gain);
     }
 
+    /// An empty sample buffer with room for `wanted` samples, for the next packet. It is one
+    /// that has played out when there is one, so filling the queue in step with the output
+    /// allocates nothing.
+    pub fn buffer(&self, wanted: usize) -> Vec<f32> {
+        self.spares.take(wanted)
+    }
+
     /// Queues one packet. A packet the cue refuses is dropped, so a decoder that has been
     /// retired makes no sound while it winds down. This never blocks: a caller with nothing
     /// else to do waits through `drain`, one with commands to answer waits through `full`.
-    pub fn write(&mut self, samples: SamplesBuffer) -> Result<(), Gone> {
+    pub fn write(&mut self, packet: Packet) -> Result<(), Gone> {
         if self.output_changed() {
             return Err(self.disconnected());
         }
         if !self.cue.admit() {
+            self.spares.keep(packet.samples);
             return Ok(());
         }
 
         self.output
             .sink()
-            .append(Chunk::new(samples, &self.cue, &self.live));
+            .append(Chunk::new(packet, &self.cue, &self.live, &self.spares));
         Ok(())
     }
 
@@ -331,11 +402,16 @@ impl Paced {
 /// device has gone, a Bluetooth headset that dropped its link, has nothing to reopen on and
 /// nothing else asks the system again, so without the watch playback stays silent until the app
 /// restarts. The watch ends when the engine listening on `notify` is gone.
+///
+/// A device that is present is not enough: ALSA always names a default one, and without the
+/// sound server's plugin it never opens. Reporting it anyway would restart the engine every poll,
+/// and dropping librespot's player joins its thread on the main one, so the watch waits until a
+/// stream actually opens.
 pub fn watch_for_output(notify: UnboundedSender<()>) {
     std::thread::spawn(move || {
         while !notify.is_closed() {
             std::thread::sleep(WATCH_POLL);
-            if !crate::audio::available() {
+            if !crate::audio::openable() {
                 continue;
             }
             log::info!("sink: an output device is available again, reopening");
@@ -345,11 +421,12 @@ pub fn watch_for_output(notify: UnboundedSender<()>) {
     });
 }
 
-/// A packet of interleaved samples at one rate, ready for the queue.
-pub fn packet(samples: &[f32], channels: u16, rate: u32) -> Option<SamplesBuffer> {
-    Some(SamplesBuffer::new(
-        NonZero::new(channels)?,
-        NonZero::new(rate)?,
+/// A packet of interleaved samples at one rate, ready for the queue. It takes the buffer over
+/// rather than copying it, so a buffer from [`Paced::buffer`] goes round without allocating.
+pub fn packet(samples: Vec<f32>, channels: u16, rate: u32) -> Option<Packet> {
+    Some(Packet {
         samples,
-    ))
+        channels: NonZero::new(channels)?,
+        rate: NonZero::new(rate)?,
+    })
 }

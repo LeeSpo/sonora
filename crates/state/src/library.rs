@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{App, Context, Entity, SharedString, Task};
 use music::{Album, MediaKind, MusicApi, Page, Pages, Playlist, SavedArtist, Shape, Track};
+use tokio::sync::Semaphore;
 
 use crate::snapshot::{Kind, Remembered, Snapshots};
 use crate::{Io, Network, Outcome, Session, SessionEvent, Target, Toasts, join, mosaic};
@@ -16,6 +18,10 @@ const FATAL: [LibraryPart; 3] = [
     LibraryPart::Albums,
 ];
 const FATAL_LOCAL: [LibraryPart; 2] = [LibraryPart::Tracks, LibraryPart::Albums];
+
+/// Lets a few playlists have their contents read at a time. Each read holds every track of its
+/// playlist until it is cut down to ids, and a library asks for all of its playlists at once.
+static READS: Semaphore = Semaphore::const_new(4);
 
 /// Which provider a library page, an id or a playlist belongs to. The streaming shelf follows
 /// the signed-in provider; the local shelf follows the imported folder.
@@ -150,9 +156,9 @@ impl Held {
 
 #[derive(Default)]
 struct Starred {
-    tracks: Vec<Track>,
-    albums: Vec<Album>,
-    artists: Vec<SavedArtist>,
+    tracks: Rows<Track>,
+    albums: Rows<Album>,
+    artists: Rows<SavedArtist>,
 }
 
 struct Favorites<'a> {
@@ -162,27 +168,27 @@ struct Favorites<'a> {
 }
 
 struct FavoritesMut<'a> {
-    tracks: &'a mut Vec<Track>,
-    albums: &'a mut Vec<Album>,
-    artists: &'a mut Vec<SavedArtist>,
+    tracks: &'a mut Rows<Track>,
+    albums: &'a mut Rows<Album>,
+    artists: &'a mut Rows<SavedArtist>,
 }
 
-/// The rows of one part on their way to a snapshot, owned so the write can happen off the main
-/// thread.
+/// The rows of one part on their way to a snapshot, shared with the shelf so the write can
+/// happen off the main thread without copying the library.
 enum Kept {
-    Tracks(Vec<Track>),
-    Playlists(Vec<Playlist>),
-    Albums(Vec<Album>),
-    Artists(Vec<SavedArtist>),
+    Tracks(Arc<Vec<Track>>),
+    Playlists(Arc<Vec<Playlist>>),
+    Albums(Arc<Vec<Album>>),
+    Artists(Arc<Vec<SavedArtist>>),
 }
 
 impl Kept {
     fn listed(ready: &Ready, part: LibraryPart) -> Self {
         match part {
-            LibraryPart::Tracks => Self::Tracks(ready.tracks.clone()),
-            LibraryPart::Playlists => Self::Playlists(ready.playlists.clone()),
-            LibraryPart::Albums => Self::Albums(ready.albums.clone()),
-            LibraryPart::Artists => Self::Artists(ready.artists.clone()),
+            LibraryPart::Tracks => Self::Tracks(ready.tracks.share()),
+            LibraryPart::Playlists => Self::Playlists(ready.playlists.share()),
+            LibraryPart::Albums => Self::Albums(ready.albums.share()),
+            LibraryPart::Artists => Self::Artists(ready.artists.share()),
         }
     }
 
@@ -190,10 +196,10 @@ impl Kept {
     /// caller never asks for.
     fn starred(starred: &Starred, part: LibraryPart) -> Self {
         match part {
-            LibraryPart::Tracks => Self::Tracks(starred.tracks.clone()),
-            LibraryPart::Albums => Self::Albums(starred.albums.clone()),
-            LibraryPart::Artists => Self::Artists(starred.artists.clone()),
-            LibraryPart::Playlists => Self::Playlists(Vec::new()),
+            LibraryPart::Tracks => Self::Tracks(starred.tracks.share()),
+            LibraryPart::Albums => Self::Albums(starred.albums.share()),
+            LibraryPart::Artists => Self::Artists(starred.artists.share()),
+            LibraryPart::Playlists => Self::Playlists(Arc::default()),
         }
     }
 }
@@ -384,10 +390,10 @@ fn star(held: &mut Held, landed: Landed) -> bool {
     }
 }
 
-fn hold<T>(what: &str, result: anyhow::Result<Vec<T>>, into: &mut Vec<T>) -> bool {
+fn hold<T>(what: &str, result: anyhow::Result<Vec<T>>, into: &mut Rows<T>) -> bool {
     match result {
         Ok(rows) => {
-            *into = rows;
+            *into = rows.into();
             true
         }
         Err(error) => {
@@ -685,11 +691,56 @@ pub struct Problem {
 /// What a shelf shows once loaded. A part that failed is empty and named in `problems`.
 #[derive(Default)]
 pub struct Ready {
-    pub tracks: Vec<Track>,
-    pub playlists: Vec<Playlist>,
-    pub albums: Vec<Album>,
-    pub artists: Vec<SavedArtist>,
+    pub tracks: Rows<Track>,
+    pub playlists: Rows<Playlist>,
+    pub albums: Rows<Album>,
+    pub artists: Rows<SavedArtist>,
     pub problems: Vec<Problem>,
+}
+
+/// One list a shelf holds. A snapshot write shares it instead of copying every row, and a
+/// change made while such a write still holds the list copies it once first.
+pub struct Rows<T>(Arc<Vec<T>>);
+
+impl<T> Rows<T> {
+    /// The rows as they stand, shared rather than copied.
+    fn share(&self) -> Arc<Vec<T>> {
+        Arc::clone(&self.0)
+    }
+
+    /// Empties the list. Rows a snapshot write still holds are left to it rather than copied.
+    fn clear(&mut self) {
+        match Arc::get_mut(&mut self.0) {
+            Some(rows) => rows.clear(),
+            None => self.0 = Arc::default(),
+        }
+    }
+}
+
+impl<T> Default for Rows<T> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<T> From<Vec<T>> for Rows<T> {
+    fn from(rows: Vec<T>) -> Self {
+        Self(Arc::new(rows))
+    }
+}
+
+impl<T> Deref for Rows<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T: Clone> DerefMut for Rows<T> {
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        Arc::make_mut(&mut self.0)
+    }
 }
 
 pub enum LibraryState {
@@ -885,15 +936,15 @@ impl Library {
                 held.stale = parts.into_iter().collect();
                 held.awaited = LibraryPart::ALL.to_vec();
                 held.starred = Starred {
-                    tracks: starred_tracks,
-                    albums: starred_albums,
-                    artists: starred_artists,
+                    tracks: starred_tracks.into(),
+                    albums: starred_albums.into(),
+                    artists: starred_artists.into(),
                 };
                 held.state = LibraryState::Ready(Ready {
-                    tracks,
-                    playlists,
-                    albums,
-                    artists,
+                    tracks: tracks.into(),
+                    playlists: playlists.into(),
+                    albums: albums.into(),
+                    artists: artists.into(),
                     problems: Vec::new(),
                 });
                 cx.notify();
@@ -1392,7 +1443,7 @@ impl Library {
         held.state
             .artists()
             .iter()
-            .chain(&held.starred.artists)
+            .chain(held.starred.artists.iter())
             .find(|artist| artist.id == id)
     }
 
@@ -1679,7 +1730,7 @@ impl Library {
         held.state
             .albums()
             .iter()
-            .chain(&held.starred.albums)
+            .chain(held.starred.albums.iter())
             .find(|album| album.id == id)
     }
 
@@ -1687,6 +1738,9 @@ impl Library {
         Some(self.contents.get(playlist_id)?.contains(track_id))
     }
 
+    /// Gives each coverless streaming playlist the mosaic already on disk for it, and answers
+    /// the ones still to build with their stamps. The list is written only when a mosaic is
+    /// found, so a snapshot write holding it is not copied for nothing.
     fn adopt_mosaics(&mut self) -> Vec<(String, u32)> {
         let Some(ready) = self.held_mut(Shelf::Streaming).ready_mut() else {
             return Vec::new();
@@ -1694,14 +1748,18 @@ impl Library {
         let playlists = &mut ready.playlists;
 
         let mut wanted = Vec::new();
-        for playlist in playlists.iter_mut() {
+        let mut adopted = Vec::new();
+        for (index, playlist) in playlists.iter().enumerate() {
             if playlist.cover.is_some() || (playlist.track_count as usize) < mosaic::TILES {
                 continue;
             }
             match mosaic::cached(&playlist.id, playlist.track_count) {
-                Some(cover) => playlist.cover = Some(cover),
+                Some(cover) => adopted.push((index, cover)),
                 None => wanted.push((playlist.id.clone(), playlist.track_count)),
             }
+        }
+        for (index, cover) in adopted {
+            playlists[index].cover = Some(cover);
         }
 
         wanted
@@ -1825,18 +1883,23 @@ impl Library {
             let key = id.clone();
             let asked = id.clone();
             let task = cx.spawn(async move |this, cx| {
-                let listed =
-                    join(io.spawn(async move { client.playlist_tracks(&asked).await })).await;
+                let listed = join(io.spawn(async move {
+                    let _turn = READS.acquire().await;
+                    let tracks = client.playlist_tracks(&asked).await?;
+                    let covers = music::distinct_covers(&tracks, mosaic::TILES);
+                    let ids: HashSet<String> =
+                        tracks.into_iter().filter_map(|track| track.id).collect();
+                    anyhow::Ok((ids, covers))
+                }))
+                .await;
 
                 this.update(cx, |this, cx| {
                     this.reading.remove(&key);
                     match listed {
-                        Ok(tracks) => {
+                        Ok((ids, covers)) => {
                             if let Some(stamp) = this.mosaic_stamp(&key) {
-                                let covers = music::distinct_covers(&tracks, mosaic::TILES);
                                 this.paint_mosaic(key.clone(), stamp, covers, cx);
                             }
-                            let ids = tracks.into_iter().filter_map(|track| track.id).collect();
                             this.contents.insert(key, ids);
                             cx.notify();
                         }
@@ -1858,7 +1921,7 @@ impl Library {
             .find(|playlist| playlist.id == id)
     }
 
-    fn playlists_mut(&mut self, id: &str) -> Option<&mut Vec<Playlist>> {
+    fn playlists_mut(&mut self, id: &str) -> Option<&mut Rows<Playlist>> {
         self.held_mut(Shelf::of(id))
             .ready_mut()
             .map(|ready| &mut ready.playlists)

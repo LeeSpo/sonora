@@ -283,6 +283,15 @@ impl Session {
         provider.protected() && provider.stored()
     }
 
+    /// Whether a browser window matters right now: the current provider signs in through one,
+    /// or no account is stored yet and the sign-in screen offers every provider.
+    pub fn wants_browser(&self) -> bool {
+        match self.active {
+            Some(index) => self.providers[index].web_sign_in().is_some(),
+            None => !self.providers.iter().any(|provider| provider.stored()),
+        }
+    }
+
     pub fn forget(&mut self, slug: &str, cx: &mut Context<Self>) {
         let Some(index) = self
             .providers

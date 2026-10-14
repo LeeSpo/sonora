@@ -168,7 +168,7 @@ impl Remote {
         let playback = self.playback.read(cx);
         let state = playback.state().clone();
         let at = playback.position();
-        let track = playback.track().cloned();
+        let track = playback.track();
         let volume = playback.volume();
         let repeat = playback.repeat();
         let shuffle = self.queue.read(cx).shuffle();
@@ -186,24 +186,23 @@ impl Remote {
             self.controls.set_repeat(repeat);
         }
 
-        let id = track.as_ref().and_then(|track| track.id.clone());
-        let cover = track.as_ref().and_then(|track| self.artwork_url(track, cx));
-        let moved = id != self.shown;
-        if moved || cover != self.source {
-            self.shown = id;
-            self.source = cover.clone();
+        let id = track.and_then(|track| track.id.as_deref());
+        let cover = track.and_then(|track| self.artwork_url(track, cx));
+        let moved = id != self.shown.as_deref();
+        if moved || cover != self.source.as_deref() {
+            self.shown = id.map(str::to_owned);
+            self.source = cover.map(str::to_owned);
             self.artwork = None;
-            let remote = cover.as_deref().is_some_and(is_remote);
+            let remote = cover.is_some_and(is_remote);
             match (moved, remote) {
                 // a remote cover follows once it sits in the cache, and a sharper one for the
                 // track already on show leaves the published thumbnail up until the file lands
                 (false, true) => {}
                 // anything else is a file already
-                _ => self
-                    .controls
-                    .describe(track.as_ref(), cover.as_deref().filter(|_| !remote)),
+                _ => self.controls.describe(track, cover.filter(|_| !remote)),
             }
             if let (Some(track), Some(url), true) = (track, cover, remote) {
+                let (track, url) = (track.clone(), url.to_owned());
                 self.artwork = Some(self.fetch_artwork(track, url, cx));
             }
         }
@@ -231,13 +230,12 @@ impl Remote {
     /// The cover to publish: the album art `Cover` resolves once it arrives, the thumbnail the
     /// track carries until then. Spotify ships a 64px thumbnail with a track, which is plenty
     /// for a list row and blurry in a desktop widget that draws it several times that size.
-    fn artwork_url(&self, track: &Track, cx: &App) -> Option<String> {
+    fn artwork_url<'a>(&self, track: &'a Track, cx: &'a App) -> Option<&'a str> {
         track
             .album_id
             .as_deref()
             .and_then(|album| self.cover.read(cx).large_for(album))
-            .map(str::to_owned)
-            .or_else(|| track.cover.clone())
+            .or(track.cover.as_deref())
     }
 
     /// Brings a remote cover into the cache and republishes the track with the file. The

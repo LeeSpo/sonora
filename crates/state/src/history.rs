@@ -116,8 +116,8 @@ impl Store {
             .context("cannot prepare listening history read")?;
         let rows = query
             .query_map(params![scope, LOCAL_LIMIT], |row| {
-                let refs: String = row.get(5)?;
-                let artist_refs: Vec<ArtistRef> = serde_json::from_str(&refs).unwrap_or_default();
+                let refs = row.get_ref(5)?.as_str()?;
+                let artist_refs: Vec<ArtistRef> = serde_json::from_str(refs).unwrap_or_default();
                 let played_at: i64 = row.get(1)?;
                 let duration: i64 = row.get(9)?;
                 Ok(Track {
@@ -278,12 +278,13 @@ impl History {
                 this.task = None;
                 match loaded {
                     Ok(tracks) => {
-                        let mut pending = std::mem::take(&mut this.pending);
-                        pending.extend(tracks);
-                        let mut seen = HashSet::new();
-                        pending.retain(|track| seen.insert((track.id.clone(), track.added_at)));
-                        this.tracks = merge_recent(recent, pending);
-                        this.tracks.truncate(LOCAL_LIMIT);
+                        let mut plays = std::mem::take(&mut this.pending);
+                        match plays.is_empty() {
+                            true => plays = tracks,
+                            false => plays.extend(tracks),
+                        }
+                        dedupe(&mut plays);
+                        this.tracks = merge_recent(recent, plays, LOCAL_LIMIT);
                         this.state = HistoryState::Ready;
                     }
                     Err(error) => {
@@ -388,19 +389,42 @@ fn now() -> i64 {
 }
 
 /// Folds the provider's cross-device recently played into the local play log. The timestamped
-/// local log leads, so whatever just played here stays on top; played-elsewhere tracks fold in
-/// after, deduped, in the provider's newest-first order. A failed fetch folds in nothing.
-fn merge_recent(recent: Result<Vec<Track>>, local: Vec<Track>) -> Vec<Track> {
-    let recent = recent.unwrap_or_else(|error| {
+/// local log leads, so whatever just played here stays on top. Played-elsewhere tracks fold in
+/// after, deduped, in the provider's newest-first order. A failed fetch folds in nothing, and
+/// no more than `limit` plays come back.
+fn merge_recent(recent: Result<Vec<Track>>, mut local: Vec<Track>, limit: usize) -> Vec<Track> {
+    let mut recent = recent.unwrap_or_else(|error| {
         log::warn!("history: cannot load the provider's recently played: {error:#}");
         Vec::new()
     });
-    let known: HashSet<String> = local.iter().filter_map(|track| track.id.clone()).collect();
-    let mut added = HashSet::new();
-    let mut merged = local;
-    merged.extend(recent.into_iter().filter(|track| match track.id.clone() {
-        Some(id) => !known.contains(&id) && added.insert(id),
-        None => false,
-    }));
-    merged
+    local.truncate(limit);
+    let fresh: Vec<bool> = {
+        let mut seen: HashSet<&str> = local
+            .iter()
+            .filter_map(|track| track.id.as_deref())
+            .collect();
+        recent
+            .iter()
+            .map(|track| track.id.as_deref().is_some_and(|id| seen.insert(id)))
+            .collect()
+    };
+    let mut fresh = fresh.into_iter();
+    recent.retain(|_| fresh.next().unwrap_or(false));
+    recent.truncate(limit - local.len());
+    local.reserve_exact(recent.len());
+    local.extend(recent);
+    local
+}
+
+/// Drops every play after the first of the same track at the same time, keeping the order.
+fn dedupe(plays: &mut Vec<Track>) {
+    let first: Vec<bool> = {
+        let mut seen = HashSet::new();
+        plays
+            .iter()
+            .map(|track| seen.insert((track.id.as_deref(), track.added_at)))
+            .collect()
+    };
+    let mut first = first.into_iter();
+    plays.retain(|_| first.next().unwrap_or(true));
 }

@@ -5,6 +5,7 @@
 //! `state.sqlite` as [`StateValues`]. [`AppSettings`] holds both and saves each on its own
 //! debounce, so a sidebar drag never rewrites the preferences file.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -312,6 +313,9 @@ struct Values {
     local_folders: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     hidden_nav: Vec<String>,
+    /// Missing system requirements the user asked never to hear about again.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    silenced_requirements: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     scrobbling: BTreeMap<String, Account>,
     appearance: Appearance,
@@ -343,9 +347,15 @@ struct Appearance {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     server_side_decorations: bool,
     /// The window's own corner rounding, independent of `rounding` (the UI element radius).
-    /// On Windows this maps onto DWM's two fixed presets; on Linux/FreeBSD it only has an
-    /// effect with client-side decorations, since server-side ones are the compositor's call.
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+    /// On Windows this maps onto DWM's two fixed presets and on macOS onto the toolbar styles
+    /// AppKit sizes its corners by. On Linux/FreeBSD it only has an effect with client-side
+    /// decorations, since server-side ones are the compositor's call.
+    #[cfg(any(
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos"
+    ))]
     window_rounding: String,
     window_controls: bool,
     #[cfg(not(target_os = "macos"))]
@@ -356,6 +366,7 @@ struct Appearance {
     battery_saver: String,
     theme_overrides: ThemeOverrides,
     fullscreen_controls_autohide: String,
+    os_fullscreen: bool,
 }
 
 /// A valid custom theme, identified by its filename stem.
@@ -463,6 +474,7 @@ impl Default for Values {
             startup: DEFAULT_STARTUP.to_owned(),
             local_folders: Vec::new(),
             hidden_nav: Vec::new(),
+            silenced_requirements: Vec::new(),
             scrobbling: BTreeMap::new(),
             appearance: Appearance::default(),
         }
@@ -538,30 +550,47 @@ impl Default for StateValues {
 }
 
 /// The `runtime` row of the `app_state` table: one JSON blob, replaced whole on every save.
-#[derive(Clone)]
+/// Every call goes through one kept connection, because playback saves every few seconds and
+/// opening the database again parses its whole schema each time.
 struct StateStore {
     database: Database,
+    connection: RefCell<Option<rusqlite::Connection>>,
 }
 
 impl StateStore {
     fn new(database: Database) -> Self {
-        Self { database }
+        Self {
+            database,
+            connection: RefCell::new(None),
+        }
     }
 
-    fn open(&self) -> Result<rusqlite::Connection> {
-        self.database.open()
+    /// Runs `work` on the kept connection, opening one when there is none. A failure drops the
+    /// connection, so the next call starts from a fresh one.
+    fn with<T>(&self, work: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+        let mut kept = self.connection.borrow_mut();
+        let connection = match kept.take() {
+            Some(connection) => connection,
+            None => self.database.open()?,
+        };
+        let done = work(&connection);
+        if done.is_ok() {
+            *kept = Some(connection);
+        }
+        done
     }
 
     fn load(&self) -> Result<Option<StateValues>> {
-        let encoded: Option<String> = self
-            .open()?
-            .query_row(
-                "SELECT value FROM app_state WHERE key = 'runtime'",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .context("cannot read app state")?;
+        let encoded: Option<String> = self.with(|connection| {
+            connection
+                .query_row(
+                    "SELECT value FROM app_state WHERE key = 'runtime'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("cannot read app state")
+        })?;
         encoded
             .map(|encoded| serde_json::from_str(&encoded).context("cannot decode app state"))
             .transpose()
@@ -569,13 +598,15 @@ impl StateStore {
 
     fn save(&self, state: &StateValues) -> Result<()> {
         let encoded = serde_json::to_string(state).context("cannot encode app state")?;
-        self.open()?
-            .execute(
-                "INSERT INTO app_state (key, value) VALUES ('runtime', ?)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![encoded],
-            )
-            .context("cannot save app state")?;
+        self.with(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO app_state (key, value) VALUES ('runtime', ?)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![encoded],
+                )
+                .context("cannot save app state")
+        })?;
         Ok(())
     }
 }
@@ -599,8 +630,12 @@ impl Default for Appearance {
             transparency: ui::BACKDROP_TRANSPARENCY,
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             server_side_decorations: true,
-            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+            #[cfg(target_os = "windows")]
+            window_rounding: Rounding::Rounded.id().to_owned(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             window_rounding: Rounding::Square.id().to_owned(),
+            #[cfg(target_os = "macos")]
+            window_rounding: Rounding::Subtle.id().to_owned(),
             window_controls: true,
             #[cfg(not(target_os = "macos"))]
             traffic_light_controls: false,
@@ -610,6 +645,7 @@ impl Default for Appearance {
             battery_saver: Saver::default().id().to_owned(),
             theme_overrides: ThemeOverrides::default(),
             fullscreen_controls_autohide: FullscreenControlsAutohide::Automatic.id().to_owned(),
+            os_fullscreen: false,
         }
     }
 }
@@ -985,6 +1021,11 @@ impl AppSettings {
         self.values.appearance.blur_window
     }
 
+    /// Whether opening the fullscreen view also puts the window into OS fullscreen.
+    pub fn os_fullscreen(&self) -> bool {
+        self.values.appearance.os_fullscreen
+    }
+
     pub fn stillness(&self) -> Stillness {
         Stillness::from_id(&self.values.appearance.reduce_motion)
     }
@@ -1028,7 +1069,12 @@ impl AppSettings {
         }
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos"
+    ))]
     pub fn window_rounding(&self) -> Rounding {
         Rounding::from_id(&self.values.appearance.window_rounding)
     }
@@ -1357,18 +1403,6 @@ impl AppSettings {
         self.schedule_state_save(cx);
     }
 
-    /// Saves quietly. Nothing renders from the stored copy, the live queue is the source of truth.
-    pub fn set_resume_origin(&mut self, origin: Option<crate::Origin>, cx: &mut Context<Self>) {
-        let Some(resume) = self.state.resume.as_mut() else {
-            return;
-        };
-        if resume.origin == origin {
-            return;
-        }
-        resume.origin = origin;
-        self.save_state_quietly(cx);
-    }
-
     /// Saves quietly, since playback calls this on every position tick.
     pub fn set_resume_position(&mut self, position: f32, cx: &mut Context<Self>) {
         let Some(resume) = self.state.resume.as_mut() else {
@@ -1547,6 +1581,21 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn requirement_silenced(&self, slug: &str) -> bool {
+        self.values
+            .silenced_requirements
+            .iter()
+            .any(|silenced| silenced == slug)
+    }
+
+    pub fn silence_requirement(&mut self, slug: &str, cx: &mut Context<Self>) {
+        if self.requirement_silenced(slug) {
+            return;
+        }
+        self.values.silenced_requirements.push(slug.to_owned());
+        self.schedule_save(cx);
+    }
+
     pub fn set_startup(&mut self, screen: impl Into<String>, cx: &mut Context<Self>) {
         let screen = screen.into();
         if self.values.startup == screen {
@@ -1626,6 +1675,11 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
+    pub fn set_os_fullscreen(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.values.appearance.os_fullscreen = value;
+        self.schedule_save(cx);
+    }
+
     pub fn set_stillness(&mut self, stillness: Stillness, cx: &mut Context<Self>) {
         if self.stillness() == stillness {
             return;
@@ -1666,7 +1720,12 @@ impl AppSettings {
         self.schedule_save(cx);
     }
 
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos"
+    ))]
     pub fn set_window_rounding(&mut self, rounding: Rounding, cx: &mut Context<Self>) {
         self.values.appearance.window_rounding = rounding.id().to_owned();
         self.schedule_save(cx);
@@ -1691,6 +1750,10 @@ impl AppSettings {
     pub fn set_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
         self.values.appearance.font_size = size.clamp(ui::MIN_FONT, ui::MAX_FONT);
         self.schedule_save(cx);
+    }
+
+    pub fn reset_font_size(&mut self, cx: &mut Context<Self>) {
+        self.set_font_size(DEFAULT_FONT_SIZE, cx);
     }
 
     pub fn set_transparent(&mut self, transparent: bool, cx: &mut Context<Self>) {
@@ -2360,16 +2423,14 @@ fn take(pinned: &mut Vec<Held>, slug: &str, pin: &Pin) -> bool {
     true
 }
 
-/// Carries position and origin over from the previous record. Position survives only while the
-/// same track is current, origin as long as the provider is the same. Another provider inherits
-/// nothing.
+/// Carries the position over from the previous record while the same track is current on the
+/// same provider.
 fn carry(previous: Option<&Resume>, next: &mut Resume) {
     let playing = |resume: &Resume| resume.current.as_ref().map(|stub| stub.id.clone());
     let same = previous.filter(|old| old.provider == next.provider);
     next.position = same
         .filter(|old| playing(old) == playing(next))
         .map_or(0., |old| old.position);
-    next.origin = same.and_then(|old| old.origin.clone());
 }
 
 /// Inserts or moves `pin` into the `gap`th slot among the pins of `slugs`. `None` or a gap past

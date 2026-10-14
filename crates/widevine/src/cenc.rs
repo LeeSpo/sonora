@@ -15,6 +15,8 @@
 //! not handle are the ones that asset never uses: a `moof` whose media is not the box behind
 //! it, and a box size of zero meaning "to the end of the file".
 
+use smallvec::SmallVec;
+
 /// The Widevine sample entry this relabels, and the AAC one it relabels it to.
 const ENCA: &[u8; 4] = b"enca";
 const MP4A: &[u8; 4] = b"mp4a";
@@ -78,15 +80,18 @@ pub struct Init {
     pub timescale: u32,
 }
 
+/// The `(clear, encrypted)` byte runs of one sample. Two fit inline, so a track's samples,
+/// which live as long as the track does, need no heap block of their own each.
+pub type Runs = SmallVec<[(u32, u32); 2]>;
+
 /// One encrypted sample. Offsets are absolute and identical in ciphertext and cleartext.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sample {
     pub start: usize,
     pub len: usize,
     pub iv: [u8; 16],
-    /// `(clear, encrypted)` byte runs. Empty means the whole sample is encrypted, which is what
-    /// Apple's audio uses.
-    pub subs: Vec<(u32, u32)>,
+    /// `(clear, encrypted)` byte runs. Empty means the whole sample is encrypted.
+    pub subs: Runs,
 }
 
 impl Sample {
@@ -146,24 +151,42 @@ fn read(data: &[u8], at: usize) -> Option<Bx> {
     })
 }
 
-/// The children of a box, in order. Stops at the first header that does not parse, so a
-/// truncated tail is ignored rather than fatal.
-fn children(data: &[u8], body: usize, end: usize) -> Vec<(usize, Bx)> {
-    let mut found = Vec::new();
-    let mut at = body;
-    while at + 8 <= end {
-        let Some(bx) = read(data, at).filter(|bx| bx.end <= end) else {
-            break;
-        };
-        found.push((at, bx));
-        at += bx.total;
+/// The children of a box, in order, each with where its header starts. Stops at the first
+/// header that does not parse, so a truncated tail is ignored rather than fatal.
+fn children(data: &[u8], body: usize, end: usize) -> Children<'_> {
+    Children {
+        data,
+        at: body,
+        end,
     }
-    found
+}
+
+/// A walk over the boxes between two offsets, read as it goes rather than collected first.
+struct Children<'a> {
+    data: &'a [u8],
+    at: usize,
+    end: usize,
+}
+
+impl Iterator for Children<'_> {
+    type Item = (usize, Bx);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.at + 8 > self.end {
+            return None;
+        }
+        let Some(bx) = read(self.data, self.at).filter(|bx| bx.end <= self.end) else {
+            self.at = self.end;
+            return None;
+        };
+        let at = self.at;
+        self.at += bx.total;
+        Some((at, bx))
+    }
 }
 
 fn child(data: &[u8], body: usize, end: usize, kind: &[u8; 4]) -> Option<Bx> {
     children(data, body, end)
-        .into_iter()
         .find(|(_, bx)| &bx.kind == kind)
         .map(|(_, bx)| bx)
 }
@@ -199,10 +222,7 @@ pub fn read_init(data: &[u8]) -> Option<Init> {
         tracks: Vec::new(),
         timescale: 0,
     };
-    for (_, trak) in children(data, moov.body, moov.end)
-        .into_iter()
-        .filter(|(_, bx)| &bx.kind == b"trak")
-    {
+    for (_, trak) in children(data, moov.body, moov.end).filter(|(_, bx)| &bx.kind == b"trak") {
         let track = track_id(data, trak.body, trak.end).unwrap_or(0);
         if let Some(ticks) = timescale(data, trak.body, trak.end) {
             init.timescale = ticks;
@@ -312,12 +332,13 @@ pub fn read_fragment(window: &[u8], origin: usize, tracks: &[Encrypted]) -> Step
 
     let mut samples = Vec::new();
     let mut decode = None;
-    for (_, traf) in children(window, moof.body, moof.end)
-        .into_iter()
-        .filter(|(_, bx)| &bx.kind == b"traf")
-    {
+    for (_, traf) in children(window, moof.body, moof.end).filter(|(_, bx)| &bx.kind == b"traf") {
         decode = decode.or_else(|| decode_time(window, &traf));
-        samples.extend(read_traf(window, origin, &mdat, &traf, tracks));
+        let found = read_traf(window, origin, &mdat, &traf, tracks);
+        match samples.is_empty() {
+            true => samples = found,
+            false => samples.extend(found),
+        }
     }
     Step::Fragment {
         samples,
@@ -379,7 +400,7 @@ fn read_traf(
         return Vec::new();
     };
 
-    let (ivs, subs) = child(data, traf.body, traf.end, b"senc")
+    let (ivs, mut subs) = child(data, traf.body, traf.end, b"senc")
         .map(|senc| read_senc(data, &senc, encrypted.iv_size, run.sizes.len()))
         .unwrap_or_default();
     if ivs.is_empty() && encrypted.iv_size != 0 {
@@ -405,7 +426,7 @@ fn read_traf(
                 start: origin + at,
                 len,
                 iv,
-                subs: subs.get(index).cloned().unwrap_or_default(),
+                subs: subs.get_mut(index).map(std::mem::take).unwrap_or_default(),
             });
         }
         at = end;
@@ -500,7 +521,7 @@ fn read_trun(data: &[u8], trun: &Bx, tfhd: &Tfhd) -> Option<Trun> {
 }
 
 /// Per-sample IVs and subsample runs out of a `senc` box.
-type Senc = (Vec<[u8; 16]>, Vec<Vec<(u32, u32)>>);
+type Senc = (Vec<[u8; 16]>, Vec<Runs>);
 
 /// Reads `senc` against the IV size `tenc` declared, and against the other sizes in use when
 /// that does not account for the box exactly. A wrong size produces IVs that are silently
@@ -551,7 +572,7 @@ fn fit_senc(raw: &[u8], iv_size: u8, count: usize, subsampled: bool) -> Option<S
             true => {
                 let runs = usize::from(be16(raw, at)?);
                 at += 2;
-                let mut pattern = Vec::with_capacity(runs);
+                let mut pattern = Runs::with_capacity(runs);
                 for _ in 0..runs {
                     let clear = u32::from(be16(raw, at)?);
                     let encrypted = be32(raw, at + 2)?;
@@ -560,7 +581,7 @@ fn fit_senc(raw: &[u8], iv_size: u8, count: usize, subsampled: bool) -> Option<S
                 }
                 subs.push(pattern);
             }
-            false => subs.push(Vec::new()),
+            false => subs.push(Runs::new()),
         }
     }
     (at == raw.len()).then_some((ivs, subs))
@@ -767,7 +788,7 @@ mod tests {
         assert_eq!(ivs.len(), 2);
         assert_eq!(ivs[0][..8], [9u8; 8]);
         assert_eq!(ivs[0][8..], [0u8; 8], "a short iv is zero padded");
-        assert_eq!(subs, vec![Vec::new(), Vec::new()]);
+        assert_eq!(subs, vec![Runs::new(), Runs::new()]);
     }
 
     #[test]
@@ -782,7 +803,7 @@ mod tests {
         let senc = read(&data, 0).unwrap();
         let (ivs, subs) = read_senc(&data, &senc, 16, 1);
         assert_eq!(ivs, vec![[7u8; 16]]);
-        assert_eq!(subs, vec![vec![(16u32, 64u32)]]);
+        assert_eq!(subs, vec![Runs::from_slice(&[(16u32, 64u32)])]);
     }
 
     /// A box size that claims more than has arrived, or less than a header, must not be read.

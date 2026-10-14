@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Render, StyleRefinement};
-use gpui::{Window, div};
+use gpui::{Window, deferred, div};
 use input::WORKSPACE_CONTEXT;
 use state::{Playback, Queue, SideTab};
 use ui::{
@@ -11,7 +11,7 @@ use ui::{
 };
 
 use crate::chrome::{
-    Chrome, PlayerBar, SidebarLeft, SidebarRight, TitleBarOptions, ToastStack, UpdateNotice,
+    AppNotice, Chrome, PlayerBar, SidebarLeft, SidebarRight, TitleBarOptions, ToastStack,
 };
 use crate::shared::confirm::Confirm;
 use crate::shared::menus::CardMenu;
@@ -30,7 +30,7 @@ pub(crate) struct Workspace {
     card_menu: Entity<CardMenu>,
     widevine: Entity<WidevinePrompt>,
     toasts: Entity<ToastStack>,
-    notice: Entity<UpdateNotice>,
+    notice: Entity<AppNotice>,
     content: AnyView,
     /// A screen's own header, floated over the top of the page and outside its transition.
     /// The page pads itself to start beneath it.
@@ -60,7 +60,7 @@ impl Workspace {
             card_menu: CardMenu::entity(cx),
             widevine: cx.new(WidevinePrompt::new),
             toasts: cx.new(ToastStack::new),
-            notice: cx.new(UpdateNotice::new),
+            notice: cx.new(AppNotice::new),
             content,
             header: None,
             transition: None,
@@ -221,7 +221,7 @@ impl Render for Workspace {
             .w_full()
             .flex_1()
             .min_h_0()
-            .key_context(WORKSPACE_CONTEXT)
+            .key_context(super::shell_context(WORKSPACE_CONTEXT))
             .track_focus(&self.focus)
             .on_action(|_: &SelectNext, window, cx| {
                 if let Some(table) = shown_listing(cx) {
@@ -334,11 +334,13 @@ impl Render for Workspace {
                     )
                     .child(self.toasts.clone()),
             )
+            // deferred so the cards sit above the sidebars' resize grips, and ahead of the
+            // dialogs so those still cover them
+            .child(deferred(self.notice.clone()))
             .child(self.card_menu.clone())
             .child(self.playlist_editor.clone())
             .child(self.tag_editor.clone())
             .child(self.confirm.clone())
             .child(self.widevine.clone())
-            .child(self.notice.clone())
     }
 }

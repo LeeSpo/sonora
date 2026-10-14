@@ -167,7 +167,7 @@ impl Fetch for YouTube {
 }
 
 /// Opens the stream and waits for the preroll, each under its own deadline.
-async fn attempt_open(api: &YtMusic, id: &str) -> Result<Loaded> {
+async fn attempt_open(api: &Arc<YtMusic>, id: &str) -> Result<Loaded> {
     let started = Instant::now();
     let (format, audio) = tokio::time::timeout(PATIENCE, api.open_audio(id))
         .await

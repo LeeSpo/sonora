@@ -648,7 +648,6 @@ update-detail = 現在のバージョンは { $running } です。変更点を�
 update-detail-notes = 現在のバージョンは { $running } です。変更点を読んでから、インストールした方法で Sonora を更新してください。
 update-notes = 変更点
 update-now = 更新
-update-later = 後で
 update-working = 更新をダウンロードしています…
 update-failed = 更新をインストールできませんでした。リリースページからもう一度お試しください。
 settings-check-updates = 更新を確認

@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 use gpui::App;
 use state::Sonora;
 
-/// How often freed heap pages go back to the kernel. The first time comes after half of it, while
-/// startup is still settling.
+/// How often a due shed is tried and, under debug logging, the footprint is logged. The first
+/// tick comes after half of it, while startup is still settling.
 const INTERVAL: Duration = Duration::from_secs(10);
 /// When clean file pages are shed after launch: once the renderer and drivers are up, again once
 /// the first screen has loaded, and once more after the first minute.
@@ -16,13 +16,13 @@ const FIRST_SHEDS: [Duration; 3] = [
 /// How often clean file pages are shed after the first time.
 const SHED_EVERY: Duration = Duration::from_secs(600);
 
-/// Caps glibc at two malloc arenas and sends every block of 256 KiB or more straight to mmap.
-/// Without it each of the many worker threads keeps its own fragmented arena, and freed decode
-/// buffers stay resident. Call it first thing in `main`, before any thread exists.
+/// Keeps glibc to one malloc arena and sends every block of 256 KiB or more straight to mmap.
+/// Every arena holds on to the holes its own threads leave, so one shared arena reuses them where
+/// several would each keep their own. Call it first thing in `main`, before any thread exists.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 pub fn tune() {
     unsafe {
-        libc::mallopt(libc::M_ARENA_MAX, 2);
+        libc::mallopt(libc::M_ARENA_MAX, 1);
         libc::mallopt(libc::M_MMAP_THRESHOLD, 256 * 1024);
         libc::mallopt(libc::M_TRIM_THRESHOLD, 1024 * 1024);
     }
@@ -31,10 +31,10 @@ pub fn tune() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn tune() {}
 
-/// Gives freed heap and clean file pages back to the kernel every `INTERVAL`, but only while
-/// nobody is watching the window. A trim holds a malloc arena locked while it walks the heap and
-/// every page it returns faults back in on the next allocation, so a trim under an animating
-/// window drops frames. Work skipped while the window is watched waits for the next quiet tick.
+/// Gives clean file pages back to the kernel on the `FIRST_SHEDS` schedule and every `SHED_EVERY`
+/// after, but only while nobody is watching the window. Every page shed faults back in on its next
+/// access, so a shed under an animating window drops frames, and one that falls due while the
+/// window is watched waits for the next quiet tick.
 pub fn watch(cx: &mut App) {
     cx.spawn(async move |cx| {
         let started = Instant::now();
@@ -51,23 +51,15 @@ pub fn watch(cx: &mut App) {
                     .await;
                 cx.update(|cx| report(probed, cx));
             }
-            if cx.update(|cx| Sonora::global(cx).wake.read(cx).watched()) {
+            if started.elapsed() < shed_at
+                || cx.update(|cx| Sonora::global(cx).wake.read(cx).watched())
+            {
                 continue;
             }
-            let shedding = started.elapsed() >= shed_at;
-            if shedding {
-                shed_at = sheds
-                    .next()
-                    .unwrap_or_else(|| started.elapsed() + SHED_EVERY);
-            }
-            cx.background_executor()
-                .spawn(async move {
-                    release();
-                    if shedding {
-                        shed();
-                    }
-                })
-                .detach();
+            shed_at = sheds
+                .next()
+                .unwrap_or_else(|| started.elapsed() + SHED_EVERY);
+            cx.background_executor().spawn(async { shed() }).detach();
         }
     })
     .detach();
@@ -214,24 +206,6 @@ Rss:                 128 kB
 fn mib(bytes: usize) -> String {
     format!("{:.1} MiB", bytes as f64 / (1024. * 1024.))
 }
-
-/// Returns the free pages of every malloc arena to the kernel.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn release() {
-    unsafe { libc::malloc_trim(0) };
-}
-
-#[cfg(target_os = "macos")]
-fn release() {
-    unsafe extern "C" {
-        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
-    }
-    // A null zone with no goal asks every zone to give back all it can.
-    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
-}
-
-#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
-fn release() {}
 
 /// Drops the clean pages of every read-only file mapping from the resident set: code and data of
 /// the executable and its libraries that startup touched once. Whatever is still in use faults

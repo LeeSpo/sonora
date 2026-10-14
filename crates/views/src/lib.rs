@@ -4,6 +4,8 @@ mod screens;
 mod shared;
 mod shells;
 
+#[cfg(target_os = "macos")]
+pub use chrome::traffic_lights;
 pub use root::Root;
 use screens::artist::ArtistView;
 use screens::detail::DetailView;

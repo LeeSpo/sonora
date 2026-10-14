@@ -23,7 +23,7 @@ pub(crate) fn album_card(
 ) -> Card {
     let cover = album.cover_large.clone().or_else(|| album.cover.clone());
     let origin = Origin::album(album.id.clone()).named(album.name.clone());
-    let playing = playback.read(cx).playing_from(&origin) == Some(true);
+    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
     let pin = album.pin();
     let opened = SharedString::from(album.id.clone());
     let album_id = album.id.clone();
@@ -83,7 +83,7 @@ pub(crate) fn playlist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::playlist(playlist.id.clone()).named(playlist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin) == Some(true);
+    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
     let pin = playlist.pin();
     let opened = SharedString::from(playlist.id.clone());
     let toggled = playback.clone();
@@ -347,13 +347,12 @@ pub(crate) fn release_key(kind: ReleaseType) -> &'static str {
     }
 }
 
-/// The line under an album: the year and the artists, or the kind of release in the year's
-/// place when the provider gave none, so a new single still says it is one.
-/// The eyebrow under a release's title: its year, or its kind when the year is unknown, and
-/// who it is credited to, up to `CARD_LINKS` of them. The line is clipped to the card's
-/// width, so a compilation's twentieth credit could never be read anyway, while every name
-/// past the first few costs the grid an interactive element and a string on every frame a
-/// scroll asks for.
+/// The line under a release's title: its year, or its kind when the year is unknown, then
+/// who it is credited to, up to `CARD_LINKS` of them. The bullet between the two is left out
+/// when the release credits no one. The line is clipped to the card's width, so a
+/// compilation's twentieth credit could never be read anyway, while every name past the
+/// first few costs the grid an interactive element and a string on every frame a scroll
+/// asks for.
 pub(crate) fn released(
     id: impl Into<SharedString>,
     year: i32,
@@ -368,7 +367,14 @@ pub(crate) fn released(
         0 => kind.map(|kind| i18n::lookup(release_key(kind), None)),
         year => Some(SharedString::from(year.to_string())),
     };
-    let credited: Vec<ArtistRef> = artists.iter().take(CARD_LINKS).cloned().collect();
+    let fallback = fallback.into();
+    let credited: Vec<ArtistRef> = artists
+        .iter()
+        .filter(|artist| !artist.name.is_empty())
+        .take(CARD_LINKS)
+        .cloned()
+        .collect();
+    let named = !credited.is_empty() || !fallback.is_empty();
     let artists = cells::artist_links(id, credited, fallback, muted)
         .text_size(small)
         .truncate();
@@ -382,7 +388,7 @@ pub(crate) fn released(
         .text_color(muted)
         .when_some(year, |this, year| {
             this.child(div().flex_none().child(year))
-                .child(div().flex_none().child(BULLET))
+                .when(named, |this| this.child(div().flex_none().child(BULLET)))
         })
         .child(artists)
 }
@@ -403,7 +409,7 @@ pub(crate) fn artist_card(
     cx: &App,
 ) -> Card {
     let origin = Origin::artist(artist.id.clone()).named(artist.name.clone());
-    let playing = playback.read(cx).playing_from(&origin) == Some(true);
+    let playing = playback.read(cx).playing_from(&origin, cx) == Some(true);
     let pin = artist.pin();
     let opened = SharedString::from(artist.id.clone());
     let toggled = playback.clone();

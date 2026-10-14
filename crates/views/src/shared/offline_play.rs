@@ -22,7 +22,9 @@ pub(crate) fn play_album(
     playback: &Entity<Playback>,
     cx: &mut App,
 ) -> bool {
-    playback.update(cx, |playback, cx| start_album(playback, album_id, album_name, cx))
+    playback.update(cx, |playback, cx| {
+        start_album(playback, album_id, album_name, cx)
+    })
 }
 
 /// Start an album from disk inside a playback update. Returns whether anything played.
@@ -52,7 +54,7 @@ pub(crate) fn toggle_album(
         return false;
     }
     let origin = Origin::album(album_id.to_owned()).named(album_name.to_owned());
-    if playback.read(cx).playing_from(&origin).is_some() {
+    if playback.read(cx).playing_from(&origin, cx).is_some() {
         playback.update(cx, |playback, cx| playback.toggle_play(cx));
         return true;
     }

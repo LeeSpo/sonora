@@ -16,7 +16,9 @@ use gpui::{
 };
 use music::{Shape, Track};
 use router::Destination;
-use state::{Detail, History, Library, Network, Offline, OfflineStatus, Origin, Playback, Shelf, Sonora};
+use state::{
+    Detail, History, Library, Network, Offline, OfflineStatus, Origin, Playback, Shelf, Sonora,
+};
 use ui::{
     Button, Cell, ColumnSpec, Menu, Pending, Pin, ROW_GROUP, Scrollbar, TableSource, TableState,
 };
@@ -547,24 +549,21 @@ impl TableSource for TrackSource {
     }
 
     fn matches(&self, row: usize, query: &str, cx: &App) -> bool {
-        self.at(row, cx).is_some_and(|track| {
-            if !self.sieve.keeps(&track) {
+        self.peek(row, cx).is_some_and(|track| {
+            if !self.sieve.keeps(track) {
                 return false;
             }
-            if self.sieve.favorites && !self.favorites_only && !self.starred(&track, cx) {
+            if self.sieve.favorites && !self.favorites_only && !self.starred(track, cx) {
                 return false;
             }
             // Offline Favorites: only rows that can actually play (starred ∩ cached).
             if self.favorites_only
                 && Network::lost(cx)
-                && !track
-                    .id
-                    .as_deref()
-                    .is_some_and(music::offline::is_cached)
+                && !track.id.as_deref().is_some_and(music::offline::is_cached)
             {
                 return false;
             }
-            hits(&track, query)
+            hits(track, query)
         })
     }
 

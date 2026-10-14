@@ -17,9 +17,9 @@ use tokio::time::Instant;
 use crate::deezer::{decrypt, wire};
 use crate::engine::Loudness;
 use crate::{
-    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, HomeFeed, MediaKind, MusicApi,
-    Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile, distinct_covers,
-    escape,
+    Album, AlbumCatalogue, AlbumDetail, Artist, ArtistProfile, ArtistRef, HomeFeed, MediaKind,
+    MusicApi, Playlist, PlaylistDetail, SUGGESTIONS, SavedArtist, Track, UserProfile,
+    distinct_covers, escape,
 };
 
 const GATEWAY: &str = "https://www.deezer.com/ajax/gw-light.php";
@@ -34,6 +34,10 @@ const UPLOAD_FORMAT: &str = "MP3_MISC";
 
 /// How many favorites a library page asks for at once.
 const LIBRARY_PAGE: u32 = 2000;
+
+/// How many releases an artist page asks for. Deezer answers this many in one page, and even
+/// Bach comes to fewer than five hundred.
+const DISCOGRAPHY: u32 = 1000;
 
 const PORTRAIT_LIMIT: usize = 24;
 /// How many related artists lend their albums to a thin rail, and how many albums each
@@ -73,8 +77,7 @@ struct Session {
     /// The `sid` session cookie `deezer.ping` hands out; the `checkForm` token is bound to
     /// it, so every gateway call has to carry both.
     sid: String,
-    user_id: String,
-    user_name: String,
+    profile: UserProfile,
     /// The `checkForm` token every later gateway call carries.
     api_token: String,
     license_token: String,
@@ -125,8 +128,11 @@ impl DeezerClient {
                 arl: arl.to_owned(),
                 session: RwLock::new(Session {
                     sid: String::new(),
-                    user_id: String::new(),
-                    user_name: String::new(),
+                    profile: UserProfile {
+                        id: String::new(),
+                        display_name: String::new(),
+                        avatar: None,
+                    },
                     api_token: String::new(),
                     license_token: String::new(),
                 }),
@@ -137,7 +143,7 @@ impl DeezerClient {
         };
         client.ping().await?;
         client.refresh().await?;
-        if client.inner.session.read().await.user_id.is_empty() {
+        if client.inner.session.read().await.profile.id.is_empty() {
             bail!("the arl was refused; sign in to deezer.com again");
         }
         let secret = decrypt::secret(&client.inner.http).await;
@@ -174,26 +180,23 @@ impl DeezerClient {
     /// Pulls a fresh `checkForm` api token and license token from `deezer.getUserData`.
     async fn refresh(&self) -> Result<()> {
         let results = self.gw_raw("deezer.getUserData", "", json!({})).await?;
-        let user_id = wire::id(&results["USER"]["USER_ID"]).unwrap_or_default();
-        let user_name = wire::text(&results["USER"], &["BLOG_NAME"])
-            .unwrap_or("Deezer")
-            .to_owned();
+        let user = &results["USER"];
+        let profile = wire::profile(user);
         let api_token = wire::text(&results, &["checkForm"])
             .unwrap_or_default()
             .to_owned();
-        let license_token = wire::text(&results["USER"]["OPTIONS"], &["license_token"])
+        let license_token = wire::text(&user["OPTIONS"], &["license_token"])
             .unwrap_or_default()
             .to_owned();
         let mut session = self.inner.session.write().await;
-        session.user_id = user_id;
-        session.user_name = user_name;
+        session.profile = profile;
         session.api_token = api_token;
         session.license_token = license_token;
         Ok(())
     }
 
     async fn user_id(&self) -> String {
-        self.inner.session.read().await.user_id.clone()
+        self.inner.session.read().await.profile.id.clone()
     }
 
     /// A gateway call with the current api token. One retry with a refreshed token when the
@@ -525,29 +528,28 @@ impl MusicApi for DeezerClient {
     }
 
     async fn profile(&self) -> Result<UserProfile> {
-        let session = self.inner.session.read().await;
-        Ok(UserProfile {
-            id: session.user_id.clone(),
-            display_name: session.user_name.clone(),
-            avatar: None,
-        })
+        Ok(self.inner.session.read().await.profile.clone())
     }
 
     async fn artist(&self, artist_id: &str) -> Result<Artist> {
         let artist = escape::component(artist_id);
         let detail_path = format!("/artist/{artist}");
         let top_path = format!("/artist/{artist}/top?limit=20");
-        let albums_path = format!("/artist/{artist}/albums?limit=50");
+        let albums_path = format!("/artist/{artist}/albums?limit={DISCOGRAPHY}");
         let (detail, top, albums) = tokio::join!(
             self.public(&detail_path),
             self.public(&top_path),
             self.public(&albums_path),
         );
         let detail = detail.context("cannot load the artist")?;
-        Ok(Artist {
+        let own = ArtistRef {
             name: wire::text(&detail, &["name"])
                 .unwrap_or_default()
                 .to_owned(),
+            id: Some(artist_id.to_owned()),
+        };
+        Ok(Artist {
+            name: own.name.clone(),
             cover_large: detail
                 .get("picture_xl")
                 .or_else(|| detail.get("picture_big"))
@@ -564,6 +566,7 @@ impl MusicApi for DeezerClient {
                         .unwrap_or_default()
                         .iter()
                         .filter_map(wire::album)
+                        .map(|album| album.credit(&own))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -789,10 +792,19 @@ impl MusicApi for DeezerClient {
         let Some(artist_id) = artist_id else {
             return Ok(AlbumCatalogue::default());
         };
-        let (more_by, similar) = tokio::join!(
+        let detail_path = format!("/artist/{}", escape::component(artist_id));
+        let (detail, more_by, similar) = tokio::join!(
+            self.public(&detail_path),
             self.more_from_artist(album_id, artist_id),
             self.similar_artists(artist_id),
         );
+        let own = ArtistRef {
+            name: detail
+                .ok()
+                .and_then(|detail| wire::text(&detail, &["name"]).map(str::to_owned))
+                .unwrap_or_default(),
+            id: Some(artist_id.to_owned()),
+        };
         // Nothing read at all is an error rather than an empty rail, so the catalog does not
         // keep the empty answer for the rest of the session.
         let (more_by, similar) = match (more_by, similar) {
@@ -809,6 +821,7 @@ impl MusicApi for DeezerClient {
         let mut seen = HashSet::new();
         let mut liked: Vec<Album> = more_by
             .into_iter()
+            .map(|album| album.credit(&own))
             .filter(|album| seen.insert(album.id.clone()))
             .collect();
         // One artist at a time, so a thin rail never holds more than one slot of the
@@ -820,12 +833,16 @@ impl MusicApi for DeezerClient {
                 }
                 match self.more_from_artist(album_id, &artist.id).await {
                     Ok(releases) => {
+                        let theirs = ArtistRef {
+                            name: artist.name.clone(),
+                            id: Some(artist.id.clone()),
+                        };
                         for album in releases.into_iter().take(SIMILAR_RELEASES) {
                             if liked.len() >= SUGGESTIONS {
                                 break;
                             }
                             if seen.insert(album.id.clone()) {
-                                liked.push(album);
+                                liked.push(album.credit(&theirs));
                             }
                         }
                     }

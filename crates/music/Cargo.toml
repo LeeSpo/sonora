@@ -40,7 +40,7 @@ percent-encoding.workspace = true
 protobuf.workspace = true
 reqwest.workspace = true
 roxmltree.workspace = true
-rodio = { workspace = true, features = ["symphonia-aac", "symphonia-alac", "symphonia-isomp4", "symphonia-libopus", "symphonia-mkv", "flac", "mp3", "vorbis", "wav"] }
+rodio = { workspace = true, features = ["symphonia-aac", "symphonia-aiff", "symphonia-alac", "symphonia-isomp4", "symphonia-libopus", "symphonia-mkv", "flac", "mp3", "vorbis", "wav"] }
 rtrb.workspace = true
 rusqlite.workspace = true
 rustfft.workspace = true
@@ -55,6 +55,9 @@ time.workspace = true
 tokio.workspace = true
 widevine.workspace = true
 ytmusic.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

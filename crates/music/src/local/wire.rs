@@ -51,7 +51,8 @@ const ARTIST_NAMES: &[&str] = &[
 const VARIOUS_ARTISTS: &str = "Various Artists";
 
 const PLAYABLE_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "wav", "opus", "webm", "mka", "wv", "ape",
+    "mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "wav", "aiff", "aif", "aifc", "opus", "webm",
+    "mka", "wv", "ape",
 ];
 
 /// Chooses the track or album artist keys when reading a tag's list of names.

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, bail};
 use futures::AsyncReadExt as _;
 use gpui::http_client::{AsyncBody, HttpClient};
-use gpui::{App, AppContext as _, Context, Entity, Global, Task};
+use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use i18n::t;
 use router::Destination;
 use state::{Outcome, PlaybackState, Repeat, Sonora, Toasts};
@@ -47,19 +47,19 @@ pub struct Art {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
-    pub artwork: Option<Art>,
+    pub artwork: Option<Arc<Art>>,
     pub caption: String,
     /// Whether the caption opens anything, so a row that leads nowhere stays inert.
     pub song: bool,
-    pub toggle: String,
-    pub previous: String,
-    pub next: String,
-    pub shuffle: String,
+    pub toggle: SharedString,
+    pub previous: SharedString,
+    pub next: SharedString,
+    pub shuffle: SharedString,
     pub shuffle_on: bool,
-    pub repeat: String,
+    pub repeat: SharedString,
     pub repeat_on: bool,
-    pub show: String,
-    pub quit: String,
+    pub show: SharedString,
+    pub quit: SharedString,
     pub playing: bool,
 }
 
@@ -104,7 +104,7 @@ pub struct Tray {
     placed: bool,
     /// The cover the art below was loaded from, so a repeat of the same track loads nothing.
     cover: Option<String>,
-    art: Option<Art>,
+    art: Option<Arc<Art>>,
     artwork: Option<Task<()>>,
     _events: Task<()>,
 }
@@ -242,7 +242,7 @@ impl Tray {
                 Err(error) => return log::warn!("tray: cannot draw the cover: {error:#}"),
             };
             this.update(cx, |this, cx| {
-                this.art = Some(art);
+                this.art = Some(Arc::new(art));
                 this.publish(cx);
             })
             .ok();
@@ -302,7 +302,7 @@ async fn fetch(http: &Arc<dyn HttpClient>, url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn shown(artwork: Option<Art>, cx: &App) -> Shown {
+fn shown(artwork: Option<Arc<Art>>, cx: &App) -> Shown {
     let playback = Sonora::global(cx).playback.read(cx);
     let playing = matches!(
         playback.state(),
@@ -328,16 +328,15 @@ fn shown(artwork: Option<Art>, cx: &App) -> Shown {
         toggle: match playing {
             true => t!("tray-pause"),
             false => t!("tray-play"),
-        }
-        .to_string(),
-        previous: t!("player-previous").to_string(),
-        next: t!("player-next").to_string(),
-        shuffle: t!("player-shuffle").to_string(),
+        },
+        previous: t!("player-previous"),
+        next: t!("player-next"),
+        shuffle: t!("player-shuffle"),
         shuffle_on,
-        repeat: t!("player-repeat").to_string(),
+        repeat: t!("player-repeat"),
         repeat_on,
-        show: t!("tray-show").to_string(),
-        quit: t!("app-quit").to_string(),
+        show: t!("tray-show"),
+        quit: t!("app-quit"),
         playing,
     }
 }

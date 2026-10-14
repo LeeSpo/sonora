@@ -1,4 +1,5 @@
 mod aside;
+mod notice;
 mod player_bar;
 mod sidebar_left;
 mod sidebar_right;
@@ -6,16 +7,17 @@ mod title_bar;
 mod toasts;
 mod toolbar;
 pub(crate) mod tools;
-mod update_notice;
 
 pub(crate) use aside::Aside;
+pub(crate) use notice::AppNotice;
 pub(crate) use player_bar::PlayerBar;
 pub(crate) use sidebar_left::SidebarLeft;
 pub(crate) use sidebar_right::SidebarRight;
+#[cfg(target_os = "macos")]
+pub use title_bar::traffic_lights;
 pub(crate) use title_bar::{TitleBar, TitleBarEvent, TitleBarOptions};
 pub(crate) use toasts::ToastStack;
 pub(crate) use toolbar::{Searchable, Toolbar, Tooled};
-pub(crate) use update_notice::UpdateNotice;
 
 use gpui::prelude::*;
 use gpui::{App, Div, Entity, Global, Pixels, Window, div};
@@ -28,8 +30,8 @@ use ui::{ActiveTheme as _, MIN_CONTENT, Room, eyebrow};
 /// height, since GPUI clamps a quad's radius to half its shorter side and the title bar would
 /// otherwise draw a tighter corner than the rest of the chrome.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn window_radius(settings: &AppSettings, cx: &App) -> Option<Pixels> {
-    if settings.server_side_decorations() {
+pub(crate) fn window_radius(settings: &AppSettings, cx: &App, window: &Window) -> Option<Pixels> {
+    if window.is_fullscreen() || settings.server_side_decorations() {
         return None;
     }
     match settings.window_rounding() {

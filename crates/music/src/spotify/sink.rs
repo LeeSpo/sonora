@@ -46,12 +46,15 @@ impl Sink for OutputSink {
         Ok(())
     }
 
-    fn write(&mut self, packeted: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+    /// Casts the packet to `f32` the way librespot's `Converter::f64_to_f32` does, but into a
+    /// buffer the queue hands back once it has played rather than a fresh one per packet.
+    fn write(&mut self, packeted: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
         let samples = packeted
             .samples()
             .map_err(|error| SinkError::OnWrite(error.to_string()))?;
-        let samples = converter.f64_to_f32(samples);
-        let Some(samples) = packet(&samples, NUM_CHANNELS as u16, SAMPLE_RATE) else {
+        let mut narrowed = self.paced.buffer(samples.len());
+        narrowed.extend(samples.iter().map(|sample| *sample as f32));
+        let Some(samples) = packet(narrowed, NUM_CHANNELS as u16, SAMPLE_RATE) else {
             return Ok(());
         };
         self.paced

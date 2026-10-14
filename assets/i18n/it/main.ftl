@@ -691,7 +691,6 @@ update-detail = Stai usando { $running }. Leggi cosa è cambiato, o aggiorna ora
 update-detail-notes = Stai usando { $running }. Leggi cosa è cambiato, poi aggiorna Sonora come l'hai installata.
 update-notes = Novità
 update-now = Aggiorna
-update-later = Più tardi
 update-working = Scaricamento aggiornamento in corso…
 update-failed = Impossibile installare l'aggiornamento. Riprova dalla pagina delle release.
 settings-check-updates = Cerca aggiornamenti
