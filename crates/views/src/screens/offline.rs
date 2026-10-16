@@ -251,8 +251,17 @@ impl Render for OfflineView {
         let page = Scroller::new("offline-page", &self.scrollbar)
             .pt(inset)
             .pb(inset)
-            .child(div().px(inset).child(self.header(cx)))
-            .child(div().px(inset).children(albums).children(songs))
+            // Everything above the table must be ONE child: `page::viewport` treats item 0 as
+            // the hero and item 1 as the table. A second child before the table made the table
+            // think it sat higher by the album section's height, so after scrolling its sticky
+            // head and first rows were placed that far down (a growing gap, rows 1–4 skipped).
+            .child(
+                div()
+                    .px(inset)
+                    .child(self.header(cx))
+                    .children(albums)
+                    .children(songs),
+            )
             .child(table(&self.table))
             .when_some(note, |this, note| this.child(vacant(note, cx)));
 
