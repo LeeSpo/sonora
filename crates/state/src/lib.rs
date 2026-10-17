@@ -48,7 +48,9 @@ pub use library::{
 pub use logging::log_file;
 pub use lyrics::{Lyrics, LyricsState};
 pub use network::{Network, Reconnected};
-pub use offline::{Offline, OfflineAlbum, OfflineArtist, OfflineEntry, OfflineStatus};
+pub use offline::{
+    Offline, OfflineAlbum, OfflineArtist, OfflineEntry, OfflineStatus, album_key, is_album_standin,
+};
 pub use pins::{PinSort, Pins};
 pub use playback::{Origin, Playback, PlaybackState, Repeat, Sleep, Whence};
 pub use profile::Profile;

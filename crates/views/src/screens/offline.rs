@@ -120,7 +120,9 @@ impl OfflineView {
         // Glanceable: "128 songs · 3.2 GB"
         let mut strip = HeroMetaStrip::new().text(t!("count-songs", count = count));
         if usage.bytes > 0 {
-            strip = strip.text(SharedString::from(music::offline::format_bytes(usage.bytes)));
+            strip = strip.text(SharedString::from(music::offline::format_bytes(
+                usage.bytes,
+            )));
         }
         if !duration.is_zero() {
             strip = strip.text(runtime(duration));
@@ -269,7 +271,6 @@ impl Render for OfflineView {
     }
 }
 
-
 /// A saved album as a card: play / press both queue its offline tracks from disk.
 fn album_card(
     index: usize,
@@ -282,53 +283,45 @@ fn album_card(
     let current = {
         let playback = playback.read(cx);
         let playing = playback.track().and_then(|track| track.id.as_deref());
-        let held = playing.is_some_and(|id| {
-            tracks
-                .iter()
-                .any(|track| track.id.as_deref() == Some(id))
-        });
+        let held =
+            playing.is_some_and(|id| tracks.iter().any(|track| track.id.as_deref() == Some(id)));
         held.then(|| playback.control() == Some(true))
     };
     let count = album.track_count;
     let size = music::offline::format_bytes(album.bytes);
     let meta = t!("offline-album-meta", count = count, size = size.as_str());
     let toggled = playback.clone();
-    let pressed = playback.clone();
-    let queued = tracks.clone();
-    let started = tracks;
+    let queued = tracks;
+    let opened = state::album_key(album.album_id.as_deref(), &album.name);
     let clear_id = album.album_id.clone();
     let clear_name = album.name.clone();
 
-    Card::new(
-        ("offline-album", index),
-        SharedString::from(album.name),
-    )
-    .cover(album.cover)
-    .fallback("icons/disc-3.svg")
-    .weight(FontWeight::SEMIBOLD)
-    .meta(meta)
-    .tile(width)
-    .flat()
-    .trailing(
-        Button::new(("clear-offline-album", index))
-            .ghost()
-            .icon("icons/trash-2.svg")
-            .tooltip("offline-clear-album")
-            .on_click(move |_, _, cx| {
-                Confirm::offline_album(clear_id.clone(), clear_name.clone(), cx);
-            }),
-    )
-    .play(current == Some(true), move |_, _, cx| {
-        toggled.update(cx, |playback, cx| match current {
-            Some(_) => playback.toggle_play(cx),
-            None => playback.start_any(queued.clone(), None, cx),
-        });
-    })
-    .press(move |_, _, cx| {
-        pressed.update(cx, |playback, cx| {
-            playback.start(started.clone(), 0, None, cx)
-        });
-    })
+    Card::new(("offline-album", index), SharedString::from(album.name))
+        .cover(album.cover)
+        .fallback("icons/disc-3.svg")
+        .weight(FontWeight::SEMIBOLD)
+        .meta(meta)
+        .tile(width)
+        .flat()
+        .trailing(
+            Button::new(("clear-offline-album", index))
+                .ghost()
+                .icon("icons/trash-2.svg")
+                .tooltip("offline-clear-album")
+                .on_click(move |_, _, cx| {
+                    Confirm::offline_album(clear_id.clone(), clear_name.clone(), cx);
+                }),
+        )
+        .play(current == Some(true), move |_, _, cx| {
+            toggled.update(cx, |playback, cx| match current {
+                Some(_) => playback.toggle_play(cx),
+                None => playback.start_any(queued.clone(), None, cx),
+            });
+        })
+        // The card opens the album's page to pick a song; only the cover's play control plays it.
+        .press(move |_, _, cx| {
+            router::navigate(router::Destination::Album(opened.clone().into()), cx);
+        })
 }
 
 impl Searchable for OfflineView {

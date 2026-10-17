@@ -6,6 +6,7 @@ pub(crate) mod home;
 pub(crate) mod library;
 pub(crate) mod login;
 pub(crate) mod offline;
+pub(crate) mod offline_album;
 pub(crate) mod offline_artist;
 pub(crate) mod search;
 pub(crate) mod settings;

@@ -15,6 +15,7 @@ use screens::home::HomeView;
 pub use screens::library::LibraryView;
 pub use screens::login::LoginView;
 use screens::offline::OfflineView;
+use screens::offline_album::OfflineAlbumView;
 use screens::offline_artist::OfflineArtistView;
 pub use screens::settings::SettingsView;
 use screens::song::SongView;

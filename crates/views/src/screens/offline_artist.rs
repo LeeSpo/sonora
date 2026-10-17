@@ -15,8 +15,8 @@ use ui::{
 };
 
 use crate::shared::album_grid::CardGrid;
-use crate::shared::confirm::Confirm;
 use crate::shared::cells;
+use crate::shared::confirm::Confirm;
 use crate::shared::hero::{HeroMetaStrip, HeroPlayButton, PageHero};
 use crate::shared::page;
 use crate::shared::tracks::{TrackSource, Tracks, artist_columns};
@@ -238,8 +238,8 @@ impl Render for OfflineArtistView {
     }
 }
 
-/// A saved album as a card: its play control and a press both play the album's saved tracks
-/// from disk, since the album page itself needs the network.
+/// A saved album as a card: its play control plays the album's saved tracks from disk, and a
+/// press opens the album's page (the offline one while the network is gone).
 fn album_card(
     index: usize,
     album: OfflineAlbum,
@@ -262,9 +262,8 @@ fn album_card(
     let size = music::offline::format_bytes(album.bytes);
     let meta = t!("offline-album-meta", count = count, size = size.as_str());
     let toggled = playback.clone();
-    let pressed = playback.clone();
-    let queued = album.tracks.clone();
-    let started = album.tracks;
+    let queued = album.tracks;
+    let opened = state::album_key(album.id.as_deref(), &album.name);
     let clear_id = album.id.clone();
     let clear_name = album.name.clone();
 
@@ -293,9 +292,8 @@ fn album_card(
             None => playback.start_any(queued.clone(), None, cx),
         });
     })
+    // The card opens the album's page to pick a song; only the cover's play control plays it.
     .press(move |_, _, cx| {
-        pressed.update(cx, |playback, cx| {
-            playback.start(started.clone(), 0, None, cx)
-        });
+        router::navigate(router::Destination::Album(opened.clone().into()), cx);
     })
 }

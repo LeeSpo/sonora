@@ -24,7 +24,8 @@ use crate::shells::Shell;
 use crate::shells::workspace::Workspace;
 use crate::{
     Adaptive, ArtistView, DetailView, FullscreenView, GenreView, HistoryView, HomeView,
-    LibraryView, LoginView, OfflineArtistView, OfflineView, SettingsView, SongView, UserView,
+    LibraryView, LoginView, OfflineAlbumView, OfflineArtistView, OfflineView, SettingsView,
+    SongView, UserView,
 };
 
 struct Screens {
@@ -32,6 +33,7 @@ struct Screens {
     history: Entity<HistoryView>,
     offline: Entity<OfflineView>,
     offline_artist: Entity<OfflineArtistView>,
+    offline_album: Entity<OfflineAlbumView>,
     library: Entity<LibraryView>,
     favorites: Entity<LibraryView>,
     local: Entity<LibraryView>,
@@ -175,11 +177,14 @@ impl Root {
             if !dropped {
                 return;
             }
-            let Destination::Artist(id) = router::trail(cx).read(cx).current() else {
-                return;
-            };
-            if matches!(offline_artist(&id, cx), ArtistPage::Offline) {
-                this.reload(cx);
+            match router::trail(cx).read(cx).current() {
+                Destination::Artist(id)
+                    if matches!(offline_artist(&id, cx), ArtistPage::Offline) =>
+                {
+                    this.reload(cx)
+                }
+                Destination::Album(id) if offline_album(&id, cx) => this.reload(cx),
+                _ => {}
             }
         })
         .detach();
@@ -193,9 +198,8 @@ impl Root {
                 cx,
             )
         });
-        let favorites_view = cx.new(|cx| {
-            LibraryView::favorites(library.clone(), playback.clone(), window, cx)
-        });
+        let favorites_view =
+            cx.new(|cx| LibraryView::favorites(library.clone(), playback.clone(), window, cx));
         let local_view = cx.new(|cx| {
             LibraryView::new(Shelf::Local, library.clone(), playback.clone(), window, cx)
         });
@@ -208,6 +212,8 @@ impl Root {
         let offline_store = Sonora::global(cx).offline.clone();
         let offline_artist = cx
             .new(|cx| OfflineArtistView::new(offline_store.clone(), playback.clone(), window, cx));
+        let offline_album =
+            cx.new(|cx| OfflineAlbumView::new(offline_store.clone(), playback.clone(), window, cx));
         let offline = cx.new(|cx| OfflineView::new(offline_store, playback.clone(), window, cx));
 
         let search_library = library.clone();
@@ -326,6 +332,7 @@ impl Root {
                 history,
                 offline,
                 offline_artist,
+                offline_album,
                 library: library_view,
                 favorites: favorites_view,
                 local: local_view,
@@ -688,6 +695,11 @@ impl Root {
                 toolbar = Some(favorites.read(cx).toolbar());
                 favorites.into()
             }
+            Destination::Album(id) if offline_album(&id, cx) => {
+                let offline = Sonora::global(cx).offline.clone();
+                offline.update(cx, |offline, cx| offline.open_album(&id, cx));
+                self.screens.offline_album.clone().into()
+            }
             Destination::Album(id) => {
                 let (album, detail) = self.album(cx);
                 detail.update(cx, |detail, cx| detail.open_album(&id, cx));
@@ -776,6 +788,15 @@ fn offline_artist(id: &SharedString, cx: &App) -> ArtistPage {
         true => ArtistPage::Offline,
         false => ArtistPage::Online(id.clone()),
     }
+}
+
+/// Whether an album link opens the offline album page: a name stand-in always does, and a
+/// server id does once the network is gone and something of the album is saved.
+fn offline_album(id: &SharedString, cx: &App) -> bool {
+    state::is_album_standin(id)
+        || (!music::is_local_id(id)
+            && Network::lost(cx)
+            && Sonora::global(cx).offline.read(cx).has_album(id))
 }
 
 const UI_FONT: &str = "Inter";

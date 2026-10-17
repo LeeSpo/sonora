@@ -65,6 +65,10 @@ pub struct Offline {
     artist: Option<OfflineArtist>,
     /// The key the offline artist page was opened with.
     artist_key: Option<String>,
+    /// The album the offline album page shows, rebuilt whenever the saved tracks change.
+    album: Option<OfflineAlbum>,
+    /// The key the offline album page was opened with.
+    album_key: Option<String>,
     /// Looks up artist ids for rows saved before they were kept. One run at a time.
     backfill: Option<Task<()>>,
     /// Ids the server already answered for this session, so a song with no artist id on the
@@ -122,6 +126,8 @@ impl Offline {
             queue,
             artist: None,
             artist_key: None,
+            album: None,
+            album_key: None,
             backfill: None,
             asked: HashSet::new(),
             last_played: None,
@@ -184,6 +190,36 @@ impl Offline {
             .artist_key
             .as_deref()
             .and_then(|key| artist_tracks(key, &self.tracks));
+        self.album = self
+            .album_key
+            .as_deref()
+            .and_then(|key| album_tracks(key, &self.tracks));
+    }
+
+    /// Point the offline album page at `key` (a server album id or an [`album_key`] stand-in).
+    pub fn open_album(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.album_key = Some(key.to_owned());
+        self.album = album_tracks(key, &self.tracks);
+        cx.notify();
+    }
+
+    /// The album the offline album page shows, or `None` when nothing of it is saved.
+    pub fn album(&self) -> Option<&OfflineAlbum> {
+        self.album.as_ref()
+    }
+
+    /// The saved tracks of the album the offline album page shows, in disc and track order.
+    pub fn album_listed(&self) -> &[Track] {
+        self.album
+            .as_ref()
+            .map(|album| album.tracks.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// Whether any track of the album `key` is saved, so its link can open the offline album
+    /// page rather than a page that cannot load.
+    pub fn has_album(&self, key: &str) -> bool {
+        self.tracks.iter().any(|track| on_album(track, key))
     }
 
     /// Point the offline artist page at `key` (a server artist id or a stand-in name id).
@@ -738,6 +774,58 @@ fn album_tracks_of(track_ids: &[String], tracks: &[Track]) -> Vec<Track> {
     out
 }
 
+/// The prefix of an album key that stands in for an album saved without its server id.
+const ALBUM_STANDIN: &str = "offline-album:";
+
+/// The key a saved album opens its page with: its server id, or a stand-in made from its name
+/// for tracks saved before album ids were kept.
+pub fn album_key(id: Option<&str>, name: &str) -> String {
+    match id.filter(|id| !id.is_empty()) {
+        Some(id) => id.to_owned(),
+        None => format!("{ALBUM_STANDIN}{name}"),
+    }
+}
+
+/// Whether `key` is a name stand-in, which only the offline album page can open.
+pub fn is_album_standin(key: &str) -> bool {
+    key.starts_with(ALBUM_STANDIN)
+}
+
+fn on_album(track: &Track, key: &str) -> bool {
+    match key.strip_prefix(ALBUM_STANDIN) {
+        Some(name) => !name.is_empty() && music::offline::same_name(&track.album, name),
+        None => track.album_id.as_deref() == Some(key),
+    }
+}
+
+/// The saved tracks of the album `key`, in disc and track order. `None` when none is saved.
+pub(crate) fn album_tracks(key: &str, tracks: &[Track]) -> Option<OfflineAlbum> {
+    let mut mine: Vec<Track> = tracks
+        .iter()
+        .filter(|track| on_album(track, key))
+        .cloned()
+        .collect();
+    let first = mine.first()?;
+    let name = first.album.clone();
+    let id = first.album_id.clone();
+    let cover = mine.iter().find_map(|track| track.cover.clone());
+    mine.sort_by_key(|track| {
+        (
+            track.disc_number,
+            track.track_number,
+            track.name.to_lowercase(),
+        )
+    });
+    let ids: Vec<String> = mine.iter().filter_map(|track| track.id.clone()).collect();
+    Some(OfflineAlbum {
+        id,
+        name,
+        cover,
+        bytes: music::offline::size_of(&ids),
+        tracks: mine,
+    })
+}
+
 /// Everything saved of the artist `key`, grouped into albums. `None` when nothing is saved,
 /// so the offline artist page is never empty.
 pub(crate) fn artist_tracks(key: &str, tracks: &[Track]) -> Option<OfflineArtist> {
@@ -853,6 +941,32 @@ mod tests {
             .iter()
             .filter_map(|track| track.id.as_deref())
             .collect()
+    }
+
+    #[test]
+    fn an_album_page_lists_only_its_saved_tracks_in_order() {
+        let mut second = cached("t2", "Alpha", "Record", Vec::new());
+        second.track_number = 2;
+        let mut first = cached("t1", "Alpha", "Record", Vec::new());
+        first.track_number = 1;
+        let other = cached("t3", "Alpha", "Other", Vec::new());
+        let tracks = vec![second, other, first];
+
+        let album = album_tracks("al-Record", &tracks).expect("saved album");
+        assert_eq!(album.name, "Record");
+        assert_eq!(ids(&album.tracks), ["t1", "t2"]);
+        assert!(album_tracks("al-Missing", &tracks).is_none());
+    }
+
+    #[test]
+    fn an_album_saved_without_its_id_opens_by_name() {
+        let mut old = cached("t1", "Alpha", "", Vec::new());
+        old.album = "Record".into();
+        let key = album_key(None, "Record");
+        assert!(is_album_standin(&key));
+        assert_eq!(album_key(Some("al-1"), "Record"), "al-1");
+        let album = album_tracks(&key, &[old]).expect("found by name");
+        assert_eq!(ids(&album.tracks), ["t1"]);
     }
 
     #[test]
