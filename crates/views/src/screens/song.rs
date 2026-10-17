@@ -505,6 +505,7 @@ impl SongView {
                     let id = id.clone();
                     detail.update(cx, |detail, cx| detail.open(&id, cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),

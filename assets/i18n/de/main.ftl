@@ -819,3 +819,5 @@ toast-offline-remove-summary = { $failed ->
 trouble-offline = Keine Verbindung
 trouble-offline-detail = Prüfe deine Internetverbindung und versuche es erneut.
 toast-offline = Keine Verbindung. Bis sie zurück ist, wird nichts gestreamt.
+trouble-reconnect = Neu verbinden
+trouble-still-offline = Immer noch keine Verbindung

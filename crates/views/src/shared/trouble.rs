@@ -4,7 +4,7 @@ use i18n::t;
 use music::SignInProblem;
 use router::{Destination, navigate};
 use state::{Failure, Network};
-use ui::{Button, Notice, Vacancy};
+use ui::{ActiveTheme as _, Button, Notice, Vacancy};
 
 /// The sign-in failure a screen puts up. One that only says the provider could not be reached
 /// wears the No connection title and the crossed-out wifi mark, since the account itself is
@@ -52,6 +52,7 @@ pub(crate) fn lost(
     label: SharedString,
     reason: Option<&str>,
     retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
 ) -> Vacancy {
     let offline = reason
         .filter(|reason| !music::trouble::offline(reason))
@@ -68,11 +69,18 @@ pub(crate) fn lost(
             .icon("icons/circle-alert.svg"),
     };
 
-    let retry = Button::new(id)
-        .label(t!("trouble-retry"))
-        .icon("icons/refresh-cw.svg")
-        .outline()
-        .on_click(retry);
+    // Offline, the button asks the provider once whether it is back instead of reloading the
+    // page: the page stays as it is while the check runs, only the button spins, and a failed
+    // check says so beside it. Reconnecting never touches playback.
+    let retry = match offline {
+        true => reconnect(id, cx),
+        false => Button::new(id)
+            .label(t!("trouble-retry"))
+            .icon("icons/refresh-cw.svg")
+            .outline()
+            .on_click(retry)
+            .into_any_element(),
+    };
     // Offline with saved tracks: point at what still plays instead of leaving a dead end.
     match offline && music::offline::any_ready() {
         true => vacancy.action(
@@ -90,6 +98,34 @@ pub(crate) fn lost(
         ),
         false => vacancy.action(retry),
     }
+}
+
+/// The Reconnect button with its busy spin and, after a failed check, the line saying so.
+fn reconnect(id: impl Into<ElementId>, cx: &App) -> AnyElement {
+    let checking = Network::checking(cx);
+    let still = !checking && Network::still_offline(cx);
+    let muted = cx.theme().muted_foreground;
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            Button::new(id)
+                .label(t!("trouble-reconnect"))
+                .icon("icons/refresh-cw.svg")
+                .outline()
+                .busy(checking)
+                .on_click(|_, _, cx| Network::reconnect(cx)),
+        )
+        .when(still, |this| {
+            this.child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(t!("trouble-still-offline")),
+            )
+        })
+        .into_any_element()
 }
 
 /// The failure's message alone, for the places that only have room for one line.

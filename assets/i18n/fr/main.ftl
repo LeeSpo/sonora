@@ -954,3 +954,5 @@ toast-offline-remove-summary = { $failed ->
     [0] { $succeeded } supprimés
    *[other] { $succeeded } supprimés / { $failed } échecs
 }
+trouble-reconnect = Se reconnecter
+trouble-still-offline = Toujours impossible de se connecter

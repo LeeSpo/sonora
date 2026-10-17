@@ -602,7 +602,7 @@ impl LibraryView {
                 }
             }
             LibraryState::Failed(reason) if !self.favorites_only => {
-                return Some(self.lost("library-lost", t!("library-not-loaded"), reason));
+                return Some(self.lost("library-lost", t!("library-not-loaded"), reason, cx));
             }
             // Favorites read the starred snapshot, so a failed catalog is an empty heart page
             // rather than a network error that needs the server.
@@ -619,9 +619,12 @@ impl LibraryView {
 
         Some(match (table.filtering(cx), problem) {
             (true, _) => Vacancy::new(t!("library-no-matches")),
-            (false, Some(reason)) => {
-                self.lost("library-part-lost", t!("library-part-not-loaded"), reason)
-            }
+            (false, Some(reason)) => self.lost(
+                "library-part-lost",
+                t!("library-part-not-loaded"),
+                reason,
+                cx,
+            ),
             (false, None) if self.favorites_only => {
                 let key = match self.section {
                     Section::Songs => "library-no-songs",
@@ -639,13 +642,19 @@ impl LibraryView {
     }
 
     /// The state a shelf that did not load shows, with a button that loads it again.
-    fn lost(&self, id: &'static str, label: SharedString, reason: &str) -> Vacancy {
+    fn lost(&self, id: &'static str, label: SharedString, reason: &str, cx: &App) -> Vacancy {
         let library = self.library.clone();
         let shelf = self.shelf;
 
-        trouble::lost(id, label, Some(reason), move |_, _, cx| {
-            library.update(cx, |library, cx| library.refresh(shelf, cx));
-        })
+        trouble::lost(
+            id,
+            label,
+            Some(reason),
+            move |_, _, cx| {
+                library.update(cx, |library, cx| library.refresh(shelf, cx));
+            },
+            cx,
+        )
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -769,12 +778,7 @@ impl LibraryView {
         };
         // Album detail needs the network; offline, play what is already on disk instead.
         if Network::lost(cx)
-            && crate::shared::offline_play::play_album(
-                &album.id,
-                &album.name,
-                &self.playback,
-                cx,
-            )
+            && crate::shared::offline_play::play_album(&album.id, &album.name, &self.playback, cx)
         {
             return;
         }

@@ -758,3 +758,5 @@ toast-offline-remove-summary = { $failed ->
 trouble-offline = Bağlantı yok
 trouble-offline-detail = İnternet bağlantınızı kontrol edip tekrar deneyin.
 toast-offline = Bağlantı yok. Bağlantı gelene kadar akış olmayacak.
+trouble-reconnect = Yeniden bağlan
+trouble-still-offline = Hâlâ bağlanılamıyor

@@ -604,6 +604,7 @@ impl SearchView {
                 t!("trouble-not-loaded"),
                 reason.as_deref(),
                 move |_, _, cx| retry(cx),
+                cx,
             )
             .flex_1()
             .min_h_0()

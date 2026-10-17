@@ -920,3 +920,5 @@ toast-offline-remove-summary = { $failed ->
     [0] Удалено: { $succeeded }
    *[other] Удалено: { $succeeded } / ошибок: { $failed }
 }
+trouble-reconnect = Переподключиться
+trouble-still-offline = Всё ещё нет подключения

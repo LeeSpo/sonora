@@ -776,3 +776,5 @@ toast-offline-remove-summary = { $failed ->
 trouble-offline = Tidak ada koneksi
 trouble-offline-detail = Periksa koneksi internet Anda lalu coba lagi.
 toast-offline = Tidak ada koneksi. Tidak ada streaming sampai koneksi kembali.
+trouble-reconnect = Hubungkan ulang
+trouble-still-offline = Masih tidak dapat terhubung

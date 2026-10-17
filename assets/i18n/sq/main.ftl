@@ -905,3 +905,5 @@ toast-offline-remove-summary = { $failed ->
     [0] { $succeeded } u hoqën
    *[other] { $succeeded } u hoqën / { $failed } dështuan
 }
+trouble-reconnect = Rilidhu
+trouble-still-offline = Ende nuk lidhet

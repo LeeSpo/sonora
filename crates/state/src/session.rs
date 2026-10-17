@@ -371,6 +371,11 @@ impl Session {
 
     /// The host to try when checking whether the network is back. It is the active provider's
     /// own, so the check never touches a service the app is not already using.
+    /// The active streaming provider, for a check that asks it directly whether it answers.
+    pub fn active_provider(&self) -> Option<Arc<dyn MusicProvider>> {
+        self.providers.get(self.active?).cloned()
+    }
+
     pub fn reach(&self) -> Vec<(String, u16)> {
         self.active
             .and_then(|index| self.providers.get(index))
@@ -813,6 +818,10 @@ impl Session {
     pub fn reconnect_if_stale(&mut self, cx: &mut Context<Self>) -> bool {
         if self.reconnecting {
             return true;
+        }
+        // Offline, nothing reconnects on its own: the user asks for it from the notice.
+        if Network::lost(cx) {
+            return false;
         }
         if !matches!(self.state, SessionState::SignedIn(_)) {
             return false;

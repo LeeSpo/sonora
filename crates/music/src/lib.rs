@@ -693,6 +693,13 @@ pub trait MusicProvider: Send + Sync {
     }
     /// Every `(host, port)` to try when checking whether the network is back, in order. By
     /// default the [`reach`](Self::reach) host on 443.
+    /// Whether the provider itself answers, for a provider that can tell (a Subsonic ping).
+    /// `None` leaves the network check to a plain connection to [`reach_targets`](Self::reach_targets).
+    /// A port that accepts connections is not enough on its own: a reverse proxy in front of a
+    /// server that is down accepts them too, and treating that as "back" makes the app flap.
+    async fn reachable(&self) -> Option<bool> {
+        None
+    }
     fn reach_targets(&self) -> Vec<(String, u16)> {
         self.reach()
             .map(|host| vec![(host, 443)])

@@ -534,7 +534,9 @@ impl Lyrics {
                             }
                             return;
                         }
-                        crate::Network::reached(cx);
+                        // Lyrics come from third-party services, so their answering says nothing
+                        // about the music provider. Marking the network back here flipped every
+                        // screen from the offline notice to a reload (and back) on each lookup.
                         let ranked = ordered(&ranking, hits.clone());
                         this.keep_offline(&id, &ranked, cx);
                         this.keep(id, cached, &hits, answered, cx);

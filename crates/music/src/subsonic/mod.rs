@@ -297,6 +297,18 @@ impl MusicProvider for SubsonicProvider {
         (!host.is_empty()).then(|| host.to_owned())
     }
 
+    async fn reachable(&self) -> Option<bool> {
+        let remembered = auth::load()?;
+        Some(
+            any_answers(
+                &remembered.addresses(),
+                &remembered.username,
+                &remembered.password,
+            )
+            .await,
+        )
+    }
+
     fn reach_targets(&self) -> Vec<(String, u16)> {
         auth::load()
             .map(|remembered| reach_targets(&remembered.addresses()))
@@ -337,6 +349,16 @@ impl MusicProvider for SubsonicProvider {
     }
 }
 
+/// Whether any configured address answers a Subsonic ping.
+pub(crate) async fn any_answers(addresses: &[String], username: &str, password: &str) -> bool {
+    for address in addresses {
+        if connection::probe(address, username, password).await {
+            return true;
+        }
+    }
+    false
+}
+
 /// `(host, port)` for each configured address, using the URL's own port (or the scheme's
 /// default), without duplicates.
 pub(crate) fn reach_targets(addresses: &[String]) -> Vec<(String, u16)> {
@@ -361,7 +383,26 @@ pub(crate) fn reach_targets(addresses: &[String]) -> Vec<(String, u16)> {
 
 #[cfg(test)]
 mod reach_tests {
-    use super::{OFFLINE_RESTORED, first_offline_restore, reach_targets};
+    use super::{OFFLINE_RESTORED, any_answers, first_offline_restore, reach_targets};
+
+    /// A port that accepts the connection but never speaks Subsonic (a proxy in front of a
+    /// server that is down) must not count as reachable, or the app flips back online.
+    #[tokio::test]
+    async fn an_open_port_that_does_not_answer_a_ping_is_not_reachable() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let address = format!("http://127.0.0.1:{port}");
+        assert!(!any_answers(&[address], "u", "p").await);
+        assert!(!any_answers(&[], "u", "p").await);
+    }
 
     #[test]
     fn offline_restore_warns_only_the_first_time() {

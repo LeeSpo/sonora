@@ -733,3 +733,5 @@ toast-offline-remove-summary = { $failed ->
 trouble-offline = 接続がありません
 trouble-offline-detail = インターネット接続を確認して、もう一度お試しください。
 toast-offline = 接続がありません。接続が戻るまでストリーミングできません。
+trouble-reconnect = 再接続
+trouble-still-offline = まだ接続できません

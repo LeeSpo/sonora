@@ -841,6 +841,7 @@ impl DetailView {
                 move |_, _, cx| {
                     detail.update(cx, |detail, cx| detail.reload(cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),

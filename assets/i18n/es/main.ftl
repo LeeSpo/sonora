@@ -894,3 +894,5 @@ toast-offline-remove-summary = { $failed ->
 trouble-offline = Sin conexión
 trouble-offline-detail = Comprueba tu conexión a Internet e inténtalo de nuevo.
 toast-offline = Sin conexión. No se transmitirá nada hasta que vuelva.
+trouble-reconnect = Reconectar
+trouble-still-offline = Sigue sin poder conectarse

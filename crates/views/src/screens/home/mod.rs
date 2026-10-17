@@ -165,6 +165,7 @@ impl HomeView {
                 move |_, _, cx| {
                     home.update(cx, |home, cx| home.retry(cx));
                 },
+                cx,
             )
             .size_full()
             .into_any_element(),

@@ -957,3 +957,5 @@ toast-offline-remove-summary = { $failed ->
     [0] Odebráno: { $succeeded }
    *[other] Odebráno: { $succeeded } / selhalo: { $failed }
 }
+trouble-reconnect = Znovu připojit
+trouble-still-offline = Stále se nelze připojit

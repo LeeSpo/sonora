@@ -979,3 +979,5 @@ toast-tray-unavailable = There is no system tray to put the icon in
 
 # power
 wake-reason = Music is playing
+trouble-reconnect = Reconnect
+trouble-still-offline = Still can't connect

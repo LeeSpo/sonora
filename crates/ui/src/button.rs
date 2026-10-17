@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use gpui::prelude::*;
+use gpui::{Animation, AnimationExt as _, Transformation, percentage};
 use gpui::{
     App, ClickEvent, Div, ElementId, Hsla, Interactivity, MouseButton, Pixels, SharedString,
     Stateful, StyleRefinement, Window, div, px, svg,
@@ -37,6 +40,7 @@ pub struct Button {
     variant: Variant,
     small: bool,
     disabled: bool,
+    busy: bool,
     selected: bool,
     backgroundless: bool,
     hoverless: bool,
@@ -60,6 +64,7 @@ impl Button {
             variant: Variant::Ghost,
             small: false,
             disabled: false,
+            busy: false,
             selected: false,
             backgroundless: false,
             hoverless: false,
@@ -119,6 +124,12 @@ impl Button {
 
     pub fn small(mut self) -> Self {
         self.small = true;
+        self
+    }
+
+    /// Spins the icon and takes clicks away while something the button started is running.
+    pub fn busy(mut self, busy: bool) -> Self {
+        self.busy = busy;
         self
     }
 
@@ -225,6 +236,7 @@ impl RenderOnce for Button {
             variant,
             small,
             disabled,
+            busy,
             selected,
             backgroundless,
             hoverless,
@@ -302,7 +314,7 @@ impl RenderOnce for Button {
 
         let selected_background = theme.secondary_active;
         let radius = theme.radius;
-        let interactive = !disabled;
+        let interactive = !disabled && !busy;
         // The white hover tint follows `frosted` whatever the setting says, since it is
         // there for a button floating over artwork; only the blur itself is optional.
         let frosting = frosted && interactive && blurring(cx);
@@ -350,13 +362,21 @@ impl RenderOnce for Button {
             .when_some(hovered, |this, style| this.hover(move |_| style))
             .when_some(pressed, |this, style| this.active(move |_| style))
             .when_some(icon, |this, path| {
-                this.child(
-                    svg()
-                        .path(icons::path(path))
-                        .size(px(16.))
-                        .flex_none()
-                        .text_color(foreground),
-                )
+                let icon = svg()
+                    .path(icons::path(path))
+                    .size(px(16.))
+                    .flex_none()
+                    .text_color(foreground);
+                match busy {
+                    true => this.child(icon.with_animation(
+                        "button-busy",
+                        Animation::new(Duration::from_millis(900)).repeat(),
+                        |icon, delta| {
+                            icon.with_transformation(Transformation::rotate(percentage(delta)))
+                        },
+                    )),
+                    false => this.child(icon),
+                }
             })
             .when_some(label, |this, label| {
                 this.child(
